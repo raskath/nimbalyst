@@ -4,23 +4,8 @@ import { projectAppearanceAtom, saveProjectAppearanceAtom } from '../../../store
 import { generateWorkspaceAccentColor, initialsLength, projectIconForeground, projectInitials, type ProjectAppearanceUpdate } from '../../../../shared/projectAppearance';
 import { ProjectIcon } from '../../ProjectIcon';
 import { getFileName } from '../../../utils/pathUtils';
+import { importImageThumbnail } from '../../../utils/imageThumbnail';
 import './ProjectAppearancePanel.css';
-
-async function importThumbnail(file: File): Promise<string> {
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Choose a PNG, JPEG, or WebP image.');
-  if (file.size > 5 * 1024 * 1024) throw new Error('Choose an image smaller than 5 MB.');
-  const bitmap = await createImageBitmap(file);
-  try {
-    const scale = Math.min(1, 128 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Could not prepare the image.');
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/png');
-  } finally { bitmap.close(); }
-}
 
 export function ProjectAppearancePanel({ workspacePath }: { workspacePath: string }) {
   const { snapshot, error: loadError } = useAtomValue(projectAppearanceAtom(workspacePath));
@@ -76,7 +61,7 @@ export function ProjectAppearancePanel({ workspacePath }: { workspacePath: strin
           hidden onChange={async e => {
             const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
             setBusy(true); setError('');
-            try { change({ image: await importThumbnail(file) }); }
+            try { change({ image: await importImageThumbnail(file) }); }
             catch (err) { setError(err instanceof Error ? err.message : 'Could not read this image.'); }
             finally { setBusy(false); }
           }} />

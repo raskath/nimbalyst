@@ -20,6 +20,7 @@ import { activeSessionIdAtom, selectedWorkstreamAtom } from './sessions';
 import { workstreamActiveChildAtom } from './workstreamState';
 import { settingAtom } from './settingAtomFamily';
 import {
+  applyRailGroupPatch,
   buildRailEntries,
   createRailGroup,
   DEFAULT_PROJECT_RAIL_GROUP_NAME,
@@ -170,14 +171,13 @@ function commitRailLayout(get: Getter, set: Setter, next: RailLayout<OpenProject
   return true;
 }
 
-function newRailGroup(get: Getter, options: { name?: string; color?: string | null } = {}): NewRailGroup {
-  const color = options.color === undefined ? nextRailGroupColor(get(projectRailGroupsAtom)) : options.color;
-  return {
-    id: crypto.randomUUID(),
-    name: options.name?.trim() || DEFAULT_PROJECT_RAIL_GROUP_NAME,
-    ...(color ? { color } : {}),
-    collapsed: false,
-  };
+/** Without a `color` option the group takes the next unused palette color. */
+function newRailGroup(get: Getter, options: Omit<RailGroupPatch, 'collapsed'> = {}): NewRailGroup {
+  const { projectPaths: _, ...group } = applyRailGroupPatch(
+    { id: crypto.randomUUID(), name: DEFAULT_PROJECT_RAIL_GROUP_NAME, collapsed: false, projectPaths: [] },
+    { ...options, color: options.color === undefined ? nextRailGroupColor(get(projectRailGroupsAtom)) : options.color },
+  );
+  return group;
 }
 
 /**
@@ -227,8 +227,8 @@ export const sortOpenProjectsAtom = atom(null, (get, set) => {
 /** Group open projects. Returns the new group's id, or null when none of the paths is open. */
 export const createRailGroupAtom = atom(
   null,
-  (get, set, { paths, name, color }: { paths: string[]; name?: string; color?: string | null }): string | null => {
-    const group = newRailGroup(get, { name, color });
+  (get, set, { paths, ...appearance }: { paths: string[] } & Omit<RailGroupPatch, 'collapsed'>): string | null => {
+    const group = newRailGroup(get, appearance);
     return commitRailLayout(get, set, createRailGroup(railLayout(get), paths, group)) ? group.id : null;
   },
 );

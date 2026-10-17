@@ -50,7 +50,6 @@ import {
   type OpenProject,
 } from '../store/atoms/openProjects';
 import {
-  DEFAULT_PROJECT_RAIL_GROUP_NAME,
   nextRailGroupColor,
   projectRailGroupsAtom,
   railGroupForPath,
@@ -69,7 +68,7 @@ import { projectAppearanceAtom } from '../store/atoms/projectAppearance';
 import { openSettingsCommandAtom } from '../store/atoms/settingsNavigation';
 import { ProjectIcon } from './ProjectIcon';
 import { ProjectRailGroup } from './ProjectRailGroup';
-import { ProjectRailGroupEditor } from './ProjectRailGroupEditor';
+import { ProjectRailGroupEditor, railGroupEditorValue } from './ProjectRailGroupEditor';
 import { requestConfirmation } from '../dialogs/requestConfirmation';
 import { errorNotificationService } from '../services/ErrorNotificationService';
 import { useProjectRailDrag } from './hooks/useProjectRailDrag';
@@ -79,6 +78,11 @@ const REVEAL_LABEL = getShowInFileBrowserLabel();
 
 function nameFromPath(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+function findGroupEntry(entries: readonly RailEntry<OpenProject>[], groupId: string) {
+  return entries.find((entry): entry is Extract<RailEntry<OpenProject>, { kind: 'group' }> =>
+    entry.kind === 'group' && entry.group.id === groupId);
 }
 
 type DropPosition = 'before' | 'after' | 'merge' | 'join';
@@ -526,10 +530,7 @@ export function ProjectRail() {
     closeMenu();
   };
   const menuProjectGroup = menu?.kind === 'project' ? railGroupForPath(groups, menu.project.path) : undefined;
-  const menuGroupEntry = menu?.kind === 'group'
-    ? entries.find((entry): entry is Extract<RailEntry<OpenProject>, { kind: 'group' }> =>
-      entry.kind === 'group' && entry.group.id === menu.groupId)
-    : undefined;
+  const menuGroupEntry = menu?.kind === 'group' ? findGroupEntry(entries, menu.groupId) : undefined;
   const menuGroupGone = menu?.kind === 'group' && !menuGroupEntry;
   // Another window can dissolve the group, or its last project can close.
   React.useEffect(() => { if (menuGroupGone) setMenu(null); }, [menuGroupGone]);
@@ -984,10 +985,10 @@ export function ProjectRail() {
           anchor={editorAnchor}
           title="New group"
           submitLabel="Create group"
-          initialName={DEFAULT_PROJECT_RAIL_GROUP_NAME}
-          initialColor={nextRailGroupColor(groups)}
-          onSubmit={({ name, color }) => {
-            createGroup({ paths: [editor.path], name, color });
+          initial={{ ...railGroupEditorValue(), color: nextRailGroupColor(groups) }}
+          projects={openProjects.filter((project) => project.path === editor.path)}
+          onSubmit={(value) => {
+            createGroup({ paths: [editor.path], ...value });
             setEditor(null);
           }}
           onCancel={() => setEditor(null)}
@@ -999,10 +1000,10 @@ export function ProjectRail() {
           anchor={editorAnchor}
           title={editor.isNew ? 'New group' : 'Edit group'}
           submitLabel="Save"
-          initialName={editedGroup.name}
-          initialColor={editedGroup.color}
-          onSubmit={({ name, color }) => {
-            updateGroup({ groupId: editedGroup.id, patch: { name, color } });
+          initial={railGroupEditorValue(editedGroup)}
+          projects={findGroupEntry(entries, editedGroup.id)?.projects ?? []}
+          onSubmit={(patch) => {
+            updateGroup({ groupId: editedGroup.id, patch });
             setEditor(null);
           }}
           onCancel={() => setEditor(null)}

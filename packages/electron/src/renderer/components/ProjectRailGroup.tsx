@@ -2,9 +2,10 @@
  * ProjectRailGroup
  *
  * A Discord-style folder in the project rail. Collapsed, it is one tile with
- * up to four miniature project icons and a combined activity badge; expanded,
- * its projects stack below a folder tile on a band of the group's color.
- * Clicking the tile toggles it; the rail owns menus, dragging and drops.
+ * up to four miniature project icons, or the group's own initials, icon or
+ * image, plus a combined activity badge; expanded, its projects stack below a
+ * folder tile on a band of the group's color. Clicking the tile toggles it;
+ * the rail owns menus, dragging and drops.
  */
 
 import React, { useCallback, useState } from 'react';
@@ -20,10 +21,14 @@ import {
 } from '@floating-ui/react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
-import { generateWorkspaceAccentColor, projectIconForeground } from '../../shared/projectAppearance';
+import { generateWorkspaceAccentColor, projectIconForeground, projectInitials } from '../../shared/projectAppearance';
 import { projectAppearanceAtom } from '../store/atoms/projectAppearance';
 import type { OpenProject } from '../store/atoms/openProjects';
-import type { ProjectRailGroup as RailGroup } from '../store/atoms/projectRailGroups';
+import {
+  PROJECT_RAIL_GROUP_ICONS,
+  type ProjectRailGroup as RailGroup,
+  type RailGroupDisplay,
+} from '../store/atoms/projectRailGroups';
 import { ProjectIcon } from './ProjectIcon';
 
 function GroupMiniIcon({ project }: { project: OpenProject }) {
@@ -37,6 +42,35 @@ function GroupMiniIcon({ project }: { project: OpenProject }) {
       } as React.CSSProperties}
     >
       <ProjectIcon name={project.name} appearance={appearance} />
+    </span>
+  );
+}
+
+/** A stored group, or the group editor's draft (which uses null for unset values). */
+export interface RailGroupTileSource {
+  name: string;
+  display?: RailGroupDisplay;
+  initials?: string | null;
+  icon?: string | null;
+  image?: string | null;
+}
+
+/** What a collapsed folder shows. Shared with the group editor's preview. */
+export function ProjectRailGroupTile({ group, projects }: { group: RailGroupTileSource; projects: OpenProject[] }) {
+  // A broken image falls back to the icon, like project images fall back to initials.
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  if (group.display === 'initials') {
+    return <span className="project-rail-group-initials">{group.initials?.trim() || projectInitials(group.name)}</span>;
+  }
+  if (group.display === 'icon') {
+    const { image } = group;
+    return image && failedImage !== image
+      ? <img className="project-rail-group-image" src={image} alt="" draggable={false} onError={() => setFailedImage(image)} />
+      : <MaterialSymbol icon={group.icon || PROJECT_RAIL_GROUP_ICONS[0].icon} size={22} className="project-rail-group-symbol" />;
+  }
+  return (
+    <span className="project-rail-group-grid" aria-hidden="true">
+      {projects.slice(0, 4).map((project) => <GroupMiniIcon key={project.path} project={project} />)}
     </span>
   );
 }
@@ -138,9 +172,7 @@ export function ProjectRailGroup({
           aria-current={collapsed && containsActive ? 'true' : undefined}
         >
           {collapsed ? (
-            <span className="project-rail-group-grid" aria-hidden="true">
-              {projects.slice(0, 4).map((project) => <GroupMiniIcon key={project.path} project={project} />)}
-            </span>
+            <ProjectRailGroupTile group={group} projects={projects} />
           ) : (
             <MaterialSymbol icon="folder_open" size={22} className="project-rail-group-folder" />
           )}

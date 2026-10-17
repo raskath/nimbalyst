@@ -20,6 +20,7 @@
  */
 
 import { z } from 'zod';
+import { initialsLength } from '../projectAppearance';
 
 // ---------- Reusable schemas ----------
 
@@ -43,6 +44,12 @@ export const ProviderConfigSchema = z.object({
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
+/**
+ * Upper bound for a group image. Groups travel in every settings broadcast,
+ * so the editor stores a small PNG thumbnail, never the original file.
+ */
+export const RAIL_GROUP_IMAGE_MAX_LENGTH = 100_000;
+
 /** A named folder in the multi-project rail. Shared by every window. */
 export const ProjectRailGroupSchema = z.object({
   id: z.string().min(1),
@@ -51,7 +58,17 @@ export const ProjectRailGroupSchema = z.object({
   collapsed: z.boolean(),
   /** Members, including closed projects, so a reopened project rejoins its group. */
   projectPaths: z.array(z.string().min(1)),
+  /** What the collapsed folder shows. Absent: miniature icons of its projects. */
+  display: z.enum(['projects', 'initials', 'icon']).optional(),
+  /** Up to three characters or an emoji; when unset, the name's initials. */
+  initials: z.string().max(64).refine((value) => initialsLength(value.trim()) <= 3).optional(),
+  /** A Material Symbols name, shown when `display` is `icon` and no image is set. */
+  icon: z.string().regex(/^[a-z0-9_]{1,64}$/).optional(),
+  /** PNG data URL; replaces `icon` when set. */
+  image: z.string().max(RAIL_GROUP_IMAGE_MAX_LENGTH).regex(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/).optional(),
 });
+
+export type RailGroupDisplay = NonNullable<z.infer<typeof ProjectRailGroupSchema>['display']>;
 
 export type ProjectRailGroup = z.infer<typeof ProjectRailGroupSchema>;
 

@@ -19,10 +19,10 @@
 
 import { atom } from 'jotai';
 import { selectAtom } from 'jotai/utils';
-import type { ProjectRailGroup } from '../../../shared/settings/keys';
+import type { ProjectRailGroup, RailGroupDisplay } from '../../../shared/settings/keys';
 import { settingAtom } from './settingAtomFamily';
 
-export type { ProjectRailGroup };
+export type { ProjectRailGroup, RailGroupDisplay };
 
 /** Folder colors offered by the group editor. New groups take the first unused one. */
 export const PROJECT_RAIL_GROUP_COLORS = [
@@ -35,6 +35,56 @@ export const PROJECT_RAIL_GROUP_COLORS = [
   { name: 'Teal', value: '#14b8a6' },
   { name: 'Slate', value: '#64748b' },
 ] as const;
+
+/** Material Symbols offered for a group's collapsed tile; the first is the default. */
+export const PROJECT_RAIL_GROUP_ICONS = [
+  { icon: 'folder', label: 'Folder' },
+  { icon: 'work', label: 'Work' },
+  { icon: 'home', label: 'Home' },
+  { icon: 'person', label: 'Person' },
+  { icon: 'groups', label: 'Team' },
+  { icon: 'apartment', label: 'Company' },
+  { icon: 'storefront', label: 'Store' },
+  { icon: 'school', label: 'School' },
+  { icon: 'code', label: 'Code' },
+  { icon: 'terminal', label: 'Terminal' },
+  { icon: 'data_object', label: 'Data' },
+  { icon: 'database', label: 'Database' },
+  { icon: 'cloud', label: 'Cloud' },
+  { icon: 'dns', label: 'Server' },
+  { icon: 'bug_report', label: 'Bug' },
+  { icon: 'build', label: 'Tools' },
+  { icon: 'rocket_launch', label: 'Rocket' },
+  { icon: 'bolt', label: 'Bolt' },
+  { icon: 'lightbulb', label: 'Idea' },
+  { icon: 'science', label: 'Science' },
+  { icon: 'star', label: 'Star' },
+  { icon: 'favorite', label: 'Heart' },
+  { icon: 'flag', label: 'Flag' },
+  { icon: 'bookmark', label: 'Bookmark' },
+  { icon: 'palette', label: 'Design' },
+  { icon: 'brush', label: 'Brush' },
+  { icon: 'smartphone', label: 'Phone' },
+  { icon: 'laptop_mac', label: 'Laptop' },
+  { icon: 'language', label: 'Web' },
+  { icon: 'shopping_cart', label: 'Shop' },
+  { icon: 'payments', label: 'Payments' },
+  { icon: 'analytics', label: 'Analytics' },
+  { icon: 'campaign', label: 'Marketing' },
+  { icon: 'chat', label: 'Chat' },
+  { icon: 'description', label: 'Document' },
+  { icon: 'menu_book', label: 'Book' },
+  { icon: 'sports_esports', label: 'Games' },
+  { icon: 'music_note', label: 'Music' },
+  { icon: 'photo_camera', label: 'Photo' },
+  { icon: 'eco', label: 'Nature' },
+] as const;
+
+/**
+ * Longer side of a group image. At 96 px even an incompressible PNG stays
+ * near 50 kB as a data URL, well under RAIL_GROUP_IMAGE_MAX_LENGTH.
+ */
+export const RAIL_GROUP_IMAGE_SIZE = 96;
 
 export const DEFAULT_PROJECT_RAIL_GROUP_NAME = 'New group';
 
@@ -151,9 +201,19 @@ export function nextRailGroupColor(groups: readonly ProjectRailGroup[]): string 
 // never write an identical list (subscribers persist on every write).
 // ---------------------------------------------------------------------------
 
+/**
+ * Every field but the member list. A record rather than an array, so a field
+ * added to the schema fails to compile here until it is compared too: an
+ * uncompared field would make edits to it look like no-ops.
+ */
+const GROUP_SCALAR_FIELDS: Record<Exclude<keyof ProjectRailGroup, 'projectPaths'>, true> = {
+  id: true, name: true, color: true, collapsed: true, display: true, initials: true, icon: true, image: true,
+};
+const GROUP_SCALAR_KEYS = Object.keys(GROUP_SCALAR_FIELDS) as Array<keyof typeof GROUP_SCALAR_FIELDS>;
+
 function sameGroup(a: ProjectRailGroup, b: ProjectRailGroup): boolean {
   return a === b || (
-    a.id === b.id && a.name === b.name && a.color === b.color && a.collapsed === b.collapsed
+    GROUP_SCALAR_KEYS.every((key) => a[key] === b[key])
     && a.projectPaths.length === b.projectPaths.length
     && a.projectPaths.every((path, index) => path === b.projectPaths[index])
   );
@@ -340,9 +400,31 @@ export function sortRail<P extends { path: string; name: string }>(layout: RailL
 
 export interface RailGroupPatch {
   name?: string;
-  /** null removes the color. */
-  color?: string | null;
   collapsed?: boolean;
+  /** `projects` restores the default miniature project icons. */
+  display?: RailGroupDisplay;
+  /** For the optional fields below, null removes the value. */
+  color?: string | null;
+  initials?: string | null;
+  icon?: string | null;
+  image?: string | null;
+}
+
+/** `group` with `patch` applied. Text is trimmed and defaults are not stored. */
+export function applyRailGroupPatch(group: ProjectRailGroup, patch: RailGroupPatch): ProjectRailGroup {
+  const next: ProjectRailGroup = { ...group };
+  if (patch.name !== undefined) next.name = patch.name.trim() || DEFAULT_PROJECT_RAIL_GROUP_NAME;
+  if (patch.collapsed !== undefined) next.collapsed = patch.collapsed;
+  if (patch.display === 'projects') delete next.display;
+  else if (patch.display !== undefined) next.display = patch.display;
+  const initials = patch.initials === undefined ? undefined : patch.initials?.trim() || null;
+  for (const [key, value] of [
+    ['color', patch.color], ['initials', initials], ['icon', patch.icon], ['image', patch.image],
+  ] as const) {
+    if (value === null) delete next[key];
+    else if (value !== undefined) next[key] = value;
+  }
+  return next;
 }
 
 export function updateRailGroup(
@@ -352,13 +434,7 @@ export function updateRailGroup(
 ): ProjectRailGroup[] | null {
   const group = groups.find((candidate) => candidate.id === groupId);
   if (!group) return null;
-  const next: ProjectRailGroup = {
-    ...group,
-    ...(patch.name !== undefined ? { name: patch.name.trim() || DEFAULT_PROJECT_RAIL_GROUP_NAME } : {}),
-    ...(patch.collapsed !== undefined ? { collapsed: patch.collapsed } : {}),
-  };
-  if (patch.color === null) delete next.color;
-  else if (patch.color !== undefined) next.color = patch.color;
+  const next = applyRailGroupPatch(group, patch);
   if (sameGroup(group, next)) return null;
   return groups.map((candidate) => (candidate === group ? next : candidate));
 }

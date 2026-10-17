@@ -10,7 +10,10 @@ import { projectRailGroupsAtom, type ProjectRailGroup } from '../../store/atoms/
 import { globalSessionActivityAtom } from '../../store/atoms/sessionActivity';
 import { railDropTargetAt, type RailHitSlot } from '../hooks/useProjectRailDrag';
 
+const importImageThumbnail = vi.hoisted(() => vi.fn());
 vi.mock('@nimbalyst/runtime', () => ({ getShowInFileBrowserLabel: () => 'Show in Finder' }));
+// jsdom has no canvas; the E2E spec covers the real image pipeline.
+vi.mock('../../utils/imageThumbnail', () => ({ importImageThumbnail }));
 vi.mock('../OrgSwitcher', () => ({ OrgSwitcher: () => null }));
 vi.mock('../WorkspaceSummaryHeader', () => ({ generateWorkspaceAccentColor: () => '#123456' }));
 
@@ -316,6 +319,50 @@ it('resolves drop zones around collapsed and expanded groups, and never nests a 
   expect(railDropTargetAt(slots, 10, group)).toEqual({ type: 'insert', beforePath: '/p/A', groupId: null });
   expect(railDropTargetAt(slots, 200, group)).toEqual({ type: 'insert', beforePath: '/p/E', groupId: null });
   expect(railDropTargetAt(slots, 300, group)).toEqual({ type: 'insert', beforePath: null, groupId: null });
+});
+
+it('shows initials, a chosen icon, or an uploaded image on a collapsed group instead of its projects', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  importImageThumbnail.mockResolvedValue(png);
+  const store = railStore(['A', 'B'], [railGroup('Kunde', ['A', 'B'], { collapsed: true })]);
+  const view = render(<Provider store={store}><ProjectRail /></Provider>);
+  const folder = () => view.getByRole('button', { name: 'Group Kunde, 2 projects' });
+  const stored = () => store.get(projectRailGroupsAtom)[0];
+  const edit = async () => {
+    fireEvent.contextMenu(folder());
+    fireEvent.click(await view.findByRole('menuitem', { name: 'Edit group…' }));
+    return view.findByRole('dialog', { name: 'Edit group' });
+  };
+  expect(folder().textContent).toBe('AB'); // The projects' own initials, in miniature.
+
+  let editor = await edit();
+  fireEvent.click(within(editor).getByRole('radio', { name: 'Initials' }));
+  const initials = within(editor).getByRole('textbox', { name: 'Initials' });
+  expect(initials.getAttribute('placeholder')).toBe('KU');
+  fireEvent.change(initials, { target: { value: 'ABCD' } });
+  expect((within(editor).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(initials, { target: { value: 'KX' } });
+  fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+  expect(stored()).toMatchObject({ display: 'initials', initials: 'KX' });
+  expect(folder().textContent).toBe('KX');
+
+  editor = await edit();
+  fireEvent.click(within(editor).getByRole('radio', { name: 'Icon' }));
+  fireEvent.click(within(editor).getByRole('button', { name: 'Rocket' }));
+  fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+  expect(stored()).toMatchObject({ display: 'icon', icon: 'rocket_launch' });
+  expect(stored()).not.toHaveProperty('initials'); // Only the chosen tile's values are kept.
+  expect(folder().textContent).toBe('rocket_launch');
+
+  editor = await edit();
+  fireEvent.change(within(editor).getByLabelText('Group image'), { target: { files: [new File(['png'], 'logo.png', { type: 'image/png' })] } });
+  await within(editor).findByRole('button', { name: 'Remove image' });
+  expect(importImageThumbnail).toHaveBeenCalledWith(expect.any(File), 96);
+  expect(within(editor).getByRole('button', { name: 'Rocket' }).getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+  expect(stored()).toMatchObject({ display: 'icon', image: png });
+  expect(stored()).not.toHaveProperty('icon');
+  expect(folder().querySelector('img')?.getAttribute('src')).toBe(png);
 });
 
 it('sums the activity of a collapsed group and marks it while it holds the visible project', () => {

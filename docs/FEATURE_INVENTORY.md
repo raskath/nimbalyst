@@ -536,7 +536,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Multi-window support with per-project state persistence
 - Multi-project rail with an optional "Allow unlimited projects" setting. The default is eight projects per window; enabling unlimited projects can use more memory and CPU. Turning it off keeps current and restored projects open.
 - Reorder project rail icons by dragging, Move up/down, or Sort by name; order persists without changing the active project.
-- Group project rail icons into named, colored folders. A collapsed folder is one tile with miniature project icons and their combined activity badge. Create groups from a project's context menu or by dropping one project onto another, drag projects in and out, and move whole groups. Groups apply to every window; a closed project returns to its group when reopened, and the add menu reopens a group's closed projects together.
+- Group project rail icons into named, colored folders. A collapsed folder is one tile with miniature project icons, or the group's own initials, icon (from a curated set), or image, plus the projects' combined activity badge. Create groups from a project's context menu or by dropping one project onto another, drag projects in and out, and move whole groups. Groups apply to every window; a closed project returns to its group when reopened, and the add menu reopens a group's closed projects together.
 - Project Manager (Cmd+P)
 - System tray with session status and click-to-navigate
 - macOS menu bar fleet monitoring -- follow active sessions, see which need attention, and open them from the menu bar

@@ -6,8 +6,9 @@ import * as path from 'node:path';
 
 /**
  * Project rail groups: creating, filling, collapsing, persisting across a
- * reload, merging by drag, and closing and reopening a group. Each step also
- * saves a screenshot of the rail to the test's output directory.
+ * reload, choosing the collapsed tile, merging by drag, and closing and
+ * reopening a group. Each step also saves a screenshot of the rail to the
+ * test's output directory.
  */
 
 test.describe.configure({ mode: 'serial', timeout: 2 * TEST_TIMEOUTS.SIDEBAR_LOAD });
@@ -110,6 +111,46 @@ test('creates a named group from the menu, fills it, collapses it, and keeps it 
   await expect(restored).toHaveAttribute('aria-current', 'true');
 });
 
+test('shows initials, an icon, or an own image on the collapsed tile and keeps it across a reload', async () => {
+  const folder = rail().getByRole('button', { name: 'Group Kunde A, 2 projects' });
+  const editGroup = async () => {
+    await (await openMenu(folder)).getByRole('menuitem', { name: 'Edit group…' }).click();
+    return page.getByRole('dialog', { name: 'Edit group' });
+  };
+
+  let editor = await editGroup();
+  await editor.locator('label', { hasText: 'Initials' }).click();
+  await editor.getByRole('textbox', { name: 'Initials' }).fill('KA');
+  await editor.getByRole('button', { name: 'Save' }).click();
+  await expect(folder).toHaveText('KA');
+  await railShot('04-tile-initials');
+
+  editor = await editGroup();
+  await editor.locator('label', { hasText: 'Icon' }).click();
+  // A misspelled name renders as text instead of a single 18 px glyph.
+  const unresolved = await editor.getByRole('group', { name: 'Icons' }).locator('.material-symbols-outlined')
+    .evaluateAll((glyphs) => glyphs.filter((glyph) => glyph.getBoundingClientRect().width > 22).map((glyph) => glyph.textContent));
+  expect(unresolved).toEqual([]);
+  await editor.getByRole('button', { name: 'Rocket' }).click();
+  await railShot('05-tile-icon-picker');
+  await editor.getByRole('button', { name: 'Save' }).click();
+  await expect(folder).toHaveText('rocket_launch');
+
+  editor = await editGroup();
+  await editor.getByLabel('Group image').setInputFiles(path.resolve(__dirname, '../../icon.png'));
+  await expect(editor.getByRole('button', { name: 'Remove image' })).toBeVisible();
+  await editor.getByRole('button', { name: 'Save' }).click();
+  const image = folder.locator('img');
+  await expect(image).toHaveJSProperty('complete', true);
+  // The 1024 px source is stored as a 96 px thumbnail.
+  expect(await image.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight])).toEqual([96, 96]);
+  await railShot('06-tile-image');
+
+  await page.reload();
+  await waitForRail();
+  await expect(rail().getByRole('button', { name: 'Group Kunde A, 2 projects' }).locator('img')).toHaveJSProperty('naturalWidth', 96);
+});
+
 test('drops one project onto another to start a second group', async () => {
   await rail().getByRole('button', { name: 'Group Kunde A, 2 projects' }).click();
   const notes = projectButton(path.basename(root));
@@ -122,7 +163,7 @@ test('drops one project onto another to start a second group', async () => {
 
   await expect(rail().getByTestId('project-rail-group')).toHaveCount(2);
   await expect(rail().getByRole('button', { name: 'Group Privat, 2 projects' })).toBeVisible();
-  await railShot('04-two-groups');
+  await railShot('07-two-groups');
 });
 
 test('closes a group and reopens all of its projects from the add menu', async () => {
@@ -135,10 +176,10 @@ test('closes a group and reopens all of its projects from the add menu', async (
   const addMenu = page.getByTestId('project-rail-add-menu');
   const reopen = addMenu.getByRole('button', { name: /Kunde A.*Open 2 projects: kunde-web, kunde-api/ });
   await expect(reopen).toBeVisible();
-  await railShot('05-add-menu-groups');
+  await railShot('08-add-menu-groups');
   await reopen.click();
 
   await expect(rail().getByRole('button', { name: 'Group Kunde A, 2 projects' })).toBeVisible();
   await expect(projectButton('kunde-web')).toHaveAttribute('aria-current', 'true');
-  await railShot('06-group-reopened');
+  await railShot('09-group-reopened');
 });

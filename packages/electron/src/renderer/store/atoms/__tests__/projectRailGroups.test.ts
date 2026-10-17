@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
+import { ProjectRailGroupSchema, RAIL_GROUP_IMAGE_MAX_LENGTH } from '../../../../shared/settings/keys';
 import { hydrateSettingsAtoms } from '../settingAtomFamily';
 import {
   buildRailEntries,
@@ -167,6 +168,32 @@ describe('group operations', () => {
     expect(updateRailGroup(groups, 'g', { collapsed: true })?.[0].collapsed).toBe(true);
     expect(updateRailGroup(groups, 'g', { name: 'g', color: '#3b82f6', collapsed: false })).toBeNull();
     expect(updateRailGroup(groups, 'missing', { collapsed: true })).toBeNull();
+  });
+
+  it('sets and clears what the collapsed tile shows, and stores no default values', () => {
+    const groups = [group('g', ['a'])];
+    const initials = updateRailGroup(groups, 'g', { display: 'initials', initials: ' KA ' })!;
+    expect(initials[0]).toMatchObject({ display: 'initials', initials: 'KA' });
+    // A change to the tile alone must not look like a no-op.
+    const icon = updateRailGroup(initials, 'g', { display: 'icon', icon: 'rocket_launch' })!;
+    expect(icon[0]).toMatchObject({ display: 'icon', icon: 'rocket_launch', initials: 'KA' });
+    const image = updateRailGroup(icon, 'g', { image: 'data:image/png;base64,AAAA' })!;
+    expect(image[0].image).toBe('data:image/png;base64,AAAA');
+    const reset = updateRailGroup(image, 'g', { display: 'projects', initials: '  ', icon: null, image: null })!;
+    expect(reset[0]).toEqual(groups[0]);
+    expect(updateRailGroup(groups, 'g', { display: 'projects', initials: null })).toBeNull();
+  });
+
+  it('validates tile values where every window reads them', () => {
+    const valid = (extra: Partial<ProjectRailGroup>) => ProjectRailGroupSchema.safeParse(group('g', ['a'], extra)).success;
+    expect(valid({ display: 'initials', initials: 'K' })).toBe(true);
+    expect(valid({ initials: '🚀' })).toBe(true);
+    expect(valid({ initials: 'ABCD' })).toBe(false);
+    expect(valid({ display: 'icon', icon: 'rocket_launch' })).toBe(true);
+    expect(valid({ icon: 'Rocket Launch' })).toBe(false);
+    expect(valid({ image: 'data:image/png;base64,AAAA' })).toBe(true);
+    expect(valid({ image: 'data:image/svg+xml;base64,AAAA' })).toBe(false);
+    expect(valid({ image: `data:image/png;base64,${'A'.repeat(RAIL_GROUP_IMAGE_MAX_LENGTH)}` })).toBe(false);
   });
 
   it('steps top-level entries past whole groups and grouped projects within their group', () => {
