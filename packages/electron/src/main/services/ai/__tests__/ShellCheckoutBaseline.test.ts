@@ -155,7 +155,8 @@ it('excludes checkout copies but retains edits committed by the creating tool an
     await fs.writeFile(path.join(root, '.claude', 'unchanged.md'), 'checkout\n');
     await fs.writeFile(path.join(root, 'edited.md'), 'baseline\n');
     await fs.writeFile(path.join(root, 'deleted.md'), 'baseline\n');
-    git(root, 'add', '.'); git(root, 'commit', '-qm', 'baseline');
+    // -f: a global excludes file that ignores .claude/ must not drop the fixture.
+    git(root, 'add', '-f', '.'); git(root, 'commit', '-qm', 'baseline');
     generation = await service.register('writer', root);
     await service.pre(generation, 'create-and-edit', 'Bash');
     git(root, 'worktree', 'add', '-q', '-b', 'fixture', nested);
