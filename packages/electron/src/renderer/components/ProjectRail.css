@@ -314,6 +314,219 @@
 .project-rail-item[data-drop-position="before"]::after { top: -5px; }
 .project-rail-item[data-drop-position="after"]::after { bottom: -5px; }
 
+/*
+ * Groups. --rail-group-color is the group's folder color, set inline from
+ * user data (like --rail-item-accent); groups without one use the muted
+ * text color.
+ */
+.project-rail-group {
+  position: relative;
+  flex-shrink: 0;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border-radius: 16px;
+}
+
+.project-rail-group.is-expanded {
+  padding: 4px 0 8px;
+  background-color: color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 16%, transparent);
+}
+
+.project-rail-group-header {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+}
+
+.project-rail-group-toggle {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 1.5px solid transparent;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  color: var(--rail-group-color, var(--nim-text-muted));
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.project-rail-group.is-collapsed .project-rail-group-toggle {
+  background-color: color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 28%, var(--nim-bg-tertiary));
+}
+
+.project-rail-group-toggle:hover,
+.project-rail-group.is-collapsed .project-rail-group-toggle:hover {
+  background-color: color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 40%, var(--nim-bg-tertiary));
+}
+
+.project-rail-group-toggle:focus-visible {
+  outline: 2px solid var(--nim-border-focus);
+  outline-offset: 2px;
+}
+
+.project-rail-group-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 14px);
+  grid-auto-rows: 14px;
+  gap: 3px;
+}
+
+.project-rail-group-mini {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--rail-item-accent);
+  color: var(--rail-item-foreground);
+  font-size: 6px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+/* A collapsed group that holds the visible project carries the selection pill. */
+.project-rail-group.is-collapsed.contains-active .project-rail-group-header::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 8px;
+  bottom: 8px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background-color: var(--rail-group-color, var(--nim-text));
+}
+
+.project-rail-group.is-collapsed.contains-active .project-rail-group-toggle {
+  border-color: var(--rail-group-color, var(--nim-text-muted));
+}
+
+.project-rail-group.is-dragging {
+  opacity: 0.45;
+}
+
+.project-rail-group[data-drop-position]::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--nim-primary);
+  pointer-events: none;
+}
+
+.project-rail-group[data-drop-position="before"]::after { top: -5px; }
+.project-rail-group[data-drop-position="after"]::after { bottom: -5px; }
+
+/* Dropping here adds the dragged project to this group, or makes a new one. */
+.project-rail-group-header[data-drop-target="join"] .project-rail-group-toggle,
+.project-rail-item[data-drop-target="merge"] .project-rail-item-main {
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px var(--nim-primary);
+}
+
+.project-rail-context-menu-item-group .project-rail-context-menu-item-name::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background-color: var(--rail-group-color, var(--nim-text-muted));
+}
+
+.project-rail-group-editor {
+  position: fixed;
+  -webkit-app-region: no-drag;
+  z-index: 2000;
+  box-sizing: border-box;
+  /* Fits all nine swatches on one row. */
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background-color: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  color: var(--nim-text);
+  font-size: 13px;
+}
+
+.project-rail-group-editor-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.project-rail-group-editor-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--nim-text-muted);
+}
+
+.project-rail-group-editor-name {
+  box-sizing: border-box;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.project-rail-group-editor-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.project-rail-group-editor-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--nim-border);
+  background-color: var(--swatch-color, transparent);
+  cursor: pointer;
+}
+
+/* "No color": an empty swatch with a diagonal stroke. */
+.project-rail-group-editor-swatch.is-none {
+  background-image: linear-gradient(135deg, transparent 45%, var(--nim-text-muted) 45%, var(--nim-text-muted) 55%, transparent 55%);
+}
+
+.project-rail-group-editor-swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--nim-bg-secondary), 0 0 0 4px var(--nim-text);
+}
+
+.project-rail-group-editor-swatch:focus-visible {
+  outline: 2px solid var(--nim-border-focus);
+  outline-offset: 2px;
+}
+
+.project-rail-group-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.project-rail-group-editor-actions > button {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
 .project-rail-context-menu-item:disabled {
   color: var(--nim-text-disabled);
   cursor: default;

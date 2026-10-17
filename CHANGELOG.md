@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Group projects in the project rail into named, colored folders that collapse into one tile: create a group from a project's context menu or by dropping one project onto another, and reopen all of a group's closed projects from the add menu
 
 ### Changed
 <!-- Changes to existing functionality go here -->

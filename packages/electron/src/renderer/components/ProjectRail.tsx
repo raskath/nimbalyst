@@ -4,6 +4,8 @@
  * Discord-style vertical rail of warm projects. Click an icon to switch
  * the visible project; the inactive projects' state is kept warm via
  * per-workspace atom families and main-process service refcounting.
+ * Projects can be gathered into named, collapsible groups (see
+ * `projectRailGroups.ts`).
  *
  * Hidden when multi-project mode is off (the legacy single-window flow
  * stays as a fallback).
@@ -36,10 +38,28 @@ import {
   isOpenProjectsAtCapAtom,
   addOpenProjectAtom,
   closeOpenProjectAtom,
-  moveOpenProjectAtom,
+  closeOpenProjectsAtom,
+  createRailGroupAtom,
+  dissolveRailGroupAtom,
+  dropOnRailAtom,
+  projectRailEntriesAtom,
+  setOpenProjectGroupAtom,
   sortOpenProjectsAtom,
+  stepRailItemAtom,
+  updateRailGroupAtom,
   type OpenProject,
 } from '../store/atoms/openProjects';
+import {
+  DEFAULT_PROJECT_RAIL_GROUP_NAME,
+  nextRailGroupColor,
+  projectRailGroupsAtom,
+  railGroupForPath,
+  railStepTarget,
+  type ProjectRailGroup as RailGroup,
+  type RailDragItem,
+  type RailDropTarget,
+  type RailEntry,
+} from '../store/atoms/projectRailGroups';
 import {
   globalSessionActivityAtom,
   projectActivitySummaryAtom,
@@ -48,12 +68,49 @@ import { generateWorkspaceAccentColor, projectIconForeground } from '../../share
 import { projectAppearanceAtom } from '../store/atoms/projectAppearance';
 import { openSettingsCommandAtom } from '../store/atoms/settingsNavigation';
 import { ProjectIcon } from './ProjectIcon';
+import { ProjectRailGroup } from './ProjectRailGroup';
+import { ProjectRailGroupEditor } from './ProjectRailGroupEditor';
 import { requestConfirmation } from '../dialogs/requestConfirmation';
 import { errorNotificationService } from '../services/ErrorNotificationService';
 import { useProjectRailDrag } from './hooks/useProjectRailDrag';
 import './ProjectRail.css';
 
 const REVEAL_LABEL = getShowInFileBrowserLabel();
+
+function nameFromPath(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+type DropPosition = 'before' | 'after' | 'merge' | 'join';
+
+/** Which rail element shows the marker for a pending drop, keyed `project:<path>` or `group:<id>`. */
+function dropMarker(
+  entries: readonly RailEntry<OpenProject>[],
+  target: RailDropTarget | undefined,
+): { key: string; position: DropPosition } | null {
+  if (!target) return null;
+  if (target.type === 'merge') return { key: `project:${target.targetPath}`, position: 'merge' };
+  if (target.type === 'join') return { key: `group:${target.groupId}`, position: 'join' };
+  const keyOf = (entry: RailEntry<OpenProject>) =>
+    (entry.kind === 'project' ? `project:${entry.project.path}` : `group:${entry.group.id}`);
+  if (target.groupId !== null) {
+    const entry = entries.find((candidate) => candidate.kind === 'group' && candidate.group.id === target.groupId);
+    if (entry?.kind !== 'group') return null;
+    if (entry.group.collapsed) return { key: keyOf(entry), position: 'join' };
+    if (entry.projects.some((project) => project.path === target.beforePath)) {
+      return { key: `project:${target.beforePath}`, position: 'before' };
+    }
+    return { key: `project:${entry.projects.at(-1)!.path}`, position: 'after' };
+  }
+  if (target.beforePath === null) {
+    const last = entries.at(-1);
+    return last ? { key: keyOf(last), position: 'after' } : null;
+  }
+  const entry = entries.find((candidate) => (candidate.kind === 'project'
+    ? candidate.project.path === target.beforePath
+    : candidate.projects.some((project) => project.path === target.beforePath)));
+  return entry ? { key: keyOf(entry), position: 'before' } : null;
+}
 
 interface ProjectRailIconProps {
   project: OpenProject;
@@ -65,7 +122,8 @@ interface ProjectRailIconProps {
   onContextMenu: (project: OpenProject, x: number, y: number) => void;
   isDragging: boolean;
   menuOpen: boolean;
-  dropPosition?: 'before' | 'after';
+  /** `merge` marks the project a drop would group with the dragged one. */
+  dropPosition?: 'before' | 'after' | 'merge';
   onDragStart: (event: React.DragEvent, path: string) => void;
   onDragEnd: () => void;
 }
@@ -146,7 +204,8 @@ function ProjectRailIcon({
       onContextMenu={handleContextMenu}
       data-testid="project-rail-item"
       data-project-path={project.path}
-      data-drop-position={dropPosition}
+      data-drop-position={dropPosition === 'merge' ? undefined : dropPosition}
+      data-drop-target={dropPosition === 'merge' ? 'merge' : undefined}
       style={{ '--rail-item-accent': accentColor, '--rail-item-foreground': projectIconForeground(appearance.color) } as React.CSSProperties}
       {...getTooltipRefProps()}
     >
@@ -212,19 +271,49 @@ export function ProjectRail() {
   const atCap = useAtomValue(isOpenProjectsAtCapAtom);
   const addProject = useSetAtom(addOpenProjectAtom);
   const closeProject = useSetAtom(closeOpenProjectAtom);
-  const moveProject = useSetAtom(moveOpenProjectAtom);
+  const closeProjects = useSetAtom(closeOpenProjectsAtom);
   const sortProjects = useSetAtom(sortOpenProjectsAtom);
+  const dropOnRail = useSetAtom(dropOnRailAtom);
+  const stepRailItem = useSetAtom(stepRailItemAtom);
+  const createGroup = useSetAtom(createRailGroupAtom);
+  const setProjectGroup = useSetAtom(setOpenProjectGroupAtom);
+  const updateGroup = useSetAtom(updateRailGroupAtom);
+  const dissolveGroup = useSetAtom(dissolveRailGroupAtom);
+  const entries = useAtomValue(projectRailEntriesAtom);
+  const groups = useAtomValue(projectRailGroupsAtom);
   const activity = useAtomValue(globalSessionActivityAtom);
   const activitySummary = useAtomValue(projectActivitySummaryAtom);
   const projectListRef = React.useRef<HTMLDivElement | null>(null);
-  const drag = useProjectRailDrag(projectListRef, moveProject);
+
+  // Naming a new group, or editing an existing one.
+  const [editor, setEditor] = useState<
+    { mode: 'create'; path: string } | { mode: 'edit'; groupId: string; isNew?: boolean } | null
+  >(null);
+  const handleDrop = useCallback((item: RailDragItem, target: RailDropTarget) => {
+    const createdGroupId = dropOnRail({ item, target });
+    // Dropping one project onto another made a group; offer to name it.
+    if (createdGroupId) setEditor({ mode: 'edit', groupId: createdGroupId, isNew: true });
+  }, [dropOnRail]);
+  const drag = useProjectRailDrag(projectListRef, handleDrop);
+
+  // A collapsed group hides the active project; the folder is revealed instead.
+  const hiddenActiveGroupId = useMemo(() => {
+    for (const entry of entries) {
+      if (entry.kind === 'group' && entry.group.collapsed && entry.projects.some((project) => project.path === activePath)) {
+        return entry.group.id;
+      }
+    }
+    return null;
+  }, [entries, activePath]);
 
   React.useLayoutEffect(() => {
     const list = projectListRef.current;
     if (!isMultiProjectMode || !list) return;
 
     const revealActiveProject = () => {
-      const active = list.querySelector<HTMLElement>('.project-rail-item.is-active');
+      const active = list.querySelector<HTMLElement>(
+        '.project-rail-item.is-active, .project-rail-group.is-collapsed.contains-active > .project-rail-group-header',
+      );
       if (!active) return;
       const viewport = list.getBoundingClientRect();
       const item = active.getBoundingClientRect();
@@ -240,7 +329,7 @@ export function ProjectRail() {
     const observer = new ResizeObserver(revealActiveProject);
     observer.observe(list);
     return () => observer.disconnect();
-  }, [activePath, openProjects.length, isMultiProjectMode]);
+  }, [activePath, openProjects.length, isMultiProjectMode, hiddenActiveGroupId]);
 
   const handleActivate = useCallback(
     (path: string) => {
@@ -253,30 +342,31 @@ export function ProjectRail() {
     [activePath, setActivePath]
   );
 
-  const addProjectByPath = useCallback(async (workspacePath: string) => {
-    if (!window.electronAPI?.invoke) return;
-    if (store.get(isOpenProjectsAtCapAtom) && !store.get(openProjectsAtom).some(p => p.path === workspacePath)) return;
+  /** Register and add a project. Resolves true once it is on the rail. */
+  const addProjectByPath = useCallback(async (workspacePath: string, activate = true): Promise<boolean> => {
+    if (!window.electronAPI?.invoke) return false;
+    if (store.get(isOpenProjectsAtCapAtom) && !store.get(openProjectsAtom).some(p => p.path === workspacePath)) return false;
     try {
       const reg = await window.electronAPI.invoke('workspace:register-additional', { workspacePath });
       if (!reg?.success) {
         console.error('[ProjectRail] register-additional failed:', reg?.error);
-        return;
+        return false;
       }
 
       const project: OpenProject = {
         path: workspacePath,
-        name: workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath,
+        name: nameFromPath(workspacePath),
         openedAt: Date.now(),
       };
-      // `addOpenProjectAtom` flips `activeWorkspacePathAtom` to this path;
-      // the atom subscriber dispatches `workspace:set-active` to main.
-      if (!addProject(project)) {
-        // The limit can change in another window while registration is pending.
-        await window.electronAPI.invoke('workspace:unregister-additional', { workspacePath });
-      }
+      // With `activate`, `addOpenProjectAtom` flips `activeWorkspacePathAtom`
+      // to this path; the atom subscriber dispatches `workspace:set-active`.
+      if (addProject(project, { activate })) return true;
+      // The limit can change in another window while registration is pending.
+      await window.electronAPI.invoke('workspace:unregister-additional', { workspacePath });
     } catch (err) {
       console.error('[ProjectRail] addProjectByPath failed:', err);
     }
+    return false;
   }, [addProject, store]);
 
   const handlePickFolder = useCallback(async () => {
@@ -358,17 +448,91 @@ export function ProjectRail() {
     [closeProject, activity, openProjects.length]
   );
 
-  // Right-click context menu state. Anchored to a virtual reference at the
-  // cursor position so it works for any rail icon without per-icon refs.
-  const [menu, setMenu] = useState<{ project: OpenProject; x: number; y: number } | null>(null);
+  const handleToggleGroup = useCallback((group: RailGroup) => {
+    updateGroup({ groupId: group.id, patch: { collapsed: !group.collapsed } });
+  }, [updateGroup]);
+
+  // Closing a group closes its open projects; the group remembers them so
+  // the "+" menu can reopen them together.
+  const handleCloseGroup = useCallback(async (groupId: string) => {
+    const entry = entries.find((candidate) => candidate.kind === 'group' && candidate.group.id === groupId);
+    if (entry?.kind !== 'group') return;
+    const paths = entry.projects.map((project) => project.path);
+    const streaming = paths.reduce((sum, path) => sum + (activity.get(path)?.streaming.size ?? 0), 0);
+    const closesWindow = paths.length >= openProjects.length;
+    if (streaming > 0 || closesWindow) {
+      const proceed = await requestConfirmation({
+        title: 'Close group',
+        message: [
+          `Close ${paths.length === 1 ? 'the project' : `all ${paths.length} projects`} in ${entry.group.name}?`,
+          streaming > 0 ? `${streaming} streaming session${streaming === 1 ? '' : 's'} will be paused.` : '',
+          closesWindow ? 'No other project is open, so this window closes.' : '',
+        ].filter(Boolean).join(' '),
+        confirmLabel: 'Close projects',
+      });
+      if (!proceed) return;
+    }
+
+    closeProjects(paths);
+    for (const workspacePath of paths) {
+      try {
+        await window.electronAPI?.invoke?.('workspace:unregister-additional', { workspacePath });
+      } catch (err) {
+        console.error('[ProjectRail] unregister-additional failed:', err);
+      }
+    }
+    if (closesWindow) {
+      try {
+        await window.electronAPI?.invoke?.('workspace:close-rail-window');
+      } catch (err) {
+        console.error('[ProjectRail] close-rail-window failed:', err);
+      }
+    }
+  }, [entries, activity, openProjects.length, closeProjects]);
+
+  // Reopen a group's closed projects together and show the first of them.
+  const handleOpenGroup = useCallback(async (group: RailGroup) => {
+    const open = new Set(store.get(openProjectsAtom).map((project) => project.path));
+    const closed = group.projectPaths.filter((path) => !open.has(path));
+    const opened: string[] = [];
+    for (const path of closed) {
+      if (await addProjectByPath(path, false)) opened.push(path);
+    }
+    if (opened.length > 0) setActivePath(opened[0]);
+    if (opened.length < closed.length) {
+      errorNotificationService.showWarning(
+        `Opened ${opened.length} of ${closed.length} projects in ${group.name}`,
+        store.get(isOpenProjectsAtCapAtom)
+          ? 'The project limit is eight per window. Close a project or enable Allow unlimited projects in Settings > Advanced.'
+          : 'Some projects could not be opened. Check that their folders still exist.',
+      );
+    }
+  }, [addProjectByPath, setActivePath, store]);
+
+  // Right-click context menu state, for a project or a group. Anchored to a
+  // virtual reference at the cursor position so it works for any rail
+  // element without per-element refs.
+  const [menu, setMenu] = useState<
+    | { kind: 'project'; project: OpenProject; x: number; y: number }
+    | { kind: 'group'; groupId: string; x: number; y: number }
+    | null
+  >(null);
   const closeMenu = useCallback(() => setMenu(null), []);
-  const menuIndex = openProjects.findIndex(project => project.path === menu?.project.path);
-  const moveMenuProject = (direction: -1 | 1) => {
-    if (menuIndex < 0) return;
-    const beforePath = direction === -1 ? openProjects[menuIndex - 1]?.path : openProjects[menuIndex + 2]?.path;
-    moveProject({ path: menu!.project.path, beforePath: beforePath ?? null });
+  const menuItem: RailDragItem | null = !menu ? null
+    : menu.kind === 'project' ? { kind: 'project', path: menu.project.path } : { kind: 'group', groupId: menu.groupId };
+  const canStepMenuItem = (direction: -1 | 1) => menuItem !== null && railStepTarget(entries, menuItem, direction) !== null;
+  const stepMenuItem = (direction: -1 | 1) => {
+    if (menuItem) stepRailItem({ item: menuItem, direction });
     closeMenu();
   };
+  const menuProjectGroup = menu?.kind === 'project' ? railGroupForPath(groups, menu.project.path) : undefined;
+  const menuGroupEntry = menu?.kind === 'group'
+    ? entries.find((entry): entry is Extract<RailEntry<OpenProject>, { kind: 'group' }> =>
+      entry.kind === 'group' && entry.group.id === menu.groupId)
+    : undefined;
+  const menuGroupGone = menu?.kind === 'group' && !menuGroupEntry;
+  // Another window can dissolve the group, or its last project can close.
+  React.useEffect(() => { if (menuGroupGone) setMenu(null); }, [menuGroupGone]);
 
   // "Add project" dropdown — opens recents + folder picker action when the
   // user clicks the `+` button.
@@ -440,6 +604,11 @@ export function ProjectRail() {
     () => recentProjects.filter((r) => !openProjectPaths.has(r.path)).slice(0, 8),
     [recentProjects, openProjectPaths]
   );
+  // Groups with projects that are closed in this window.
+  const groupsToOpen = useMemo(
+    () => groups.filter((group) => group.projectPaths.some((path) => !openProjectPaths.has(path))),
+    [groups, openProjectPaths],
+  );
 
   const { refs, floatingStyles, context } = useFloating({
     open: menu !== null,
@@ -467,8 +636,33 @@ export function ProjectRail() {
   const { getFloatingProps } = useInteractions([dismiss, role]);
 
   const handleContextMenu = useCallback((project: OpenProject, x: number, y: number) => {
-    setMenu({ project, x, y });
+    setMenu({ kind: 'project', project, x, y });
   }, []);
+
+  const handleGroupContextMenu = useCallback((group: RailGroup, x: number, y: number) => {
+    setMenu({ kind: 'group', groupId: group.id, x, y });
+  }, []);
+
+  // The editor sits beside the project or group it names. Look the element
+  // up after each render: a merge renders the new group only after the drop.
+  const [editorAnchor, setEditorAnchor] = useState<Element | null>(null);
+  React.useLayoutEffect(() => {
+    if (!editor) {
+      setEditorAnchor(null);
+      return;
+    }
+    const list = projectListRef.current;
+    const anchor = editor.mode === 'create'
+      ? Array.from(list?.querySelectorAll<HTMLElement>('.project-rail-item') ?? [])
+        .find((item) => item.dataset.projectPath === editor.path)
+      : Array.from(list?.querySelectorAll<HTMLElement>('.project-rail-group') ?? [])
+        .find((item) => item.dataset.groupId === editor.groupId)
+        ?.querySelector('.project-rail-group-header');
+    setEditorAnchor(anchor ?? null);
+    // The project closed or another window removed the group.
+    if (!anchor) setEditor(null);
+  }, [editor, entries]);
+  const editedGroup = editor?.mode === 'edit' ? groups.find((group) => group.id === editor.groupId) : undefined;
 
   const handleOpenInNewWindow = useCallback(async (project: OpenProject) => {
     closeMenu();
@@ -490,29 +684,61 @@ export function ProjectRail() {
 
   if (!isMultiProjectMode) return null;
 
+  const marker = dropMarker(entries, drag.target);
+  const overlayOpen = menu !== null || editor !== null;
+  const renderProject = (project: OpenProject) => {
+    const summary = activitySummary.get(project.path);
+    const position = marker?.key === `project:${project.path}` ? marker.position : undefined;
+    return (
+      <ProjectRailIcon
+        key={project.path}
+        project={project}
+        isActive={project.path === activePath}
+        processingCount={summary?.processing ?? 0}
+        unreadCount={summary?.unread ?? 0}
+        onActivate={handleActivate}
+        onClose={handleClose}
+        onContextMenu={handleContextMenu}
+        isDragging={drag.dragged?.kind === 'project' && drag.dragged.path === project.path}
+        menuOpen={overlayOpen}
+        dropPosition={position === 'join' ? undefined : position}
+        onDragStart={(event, path) => { closeMenu(); drag.onDragStart(event, { kind: 'project', path }); }}
+        onDragEnd={drag.onDragEnd}
+      />
+    );
+  };
+  const groupColorStyle = (group: RailGroup) =>
+    (group.color ? { '--rail-group-color': group.color } as React.CSSProperties : undefined);
+
   return (
     <nav className="project-rail" data-testid="project-rail" aria-label="Open projects">
       {/* Epic H1: org switcher sits above the project switcher. */}
       <OrgSwitcher />
       <div ref={projectListRef} className="project-rail-projects" data-testid="project-rail-projects" {...drag.listProps}>
-        {openProjects.map((project) => {
-          const activity = activitySummary.get(project.path);
+        {entries.map((entry) => {
+          if (entry.kind === 'project') return renderProject(entry.project);
+          const { group, projects } = entry;
+          // As on single icons, the project the user is looking at adds no badge.
+          const others = projects.filter((project) => project.path !== activePath);
+          const position = marker?.key === `group:${group.id}` ? marker.position : undefined;
           return (
-            <ProjectRailIcon
-              key={project.path}
-              project={project}
-              isActive={project.path === activePath}
-              processingCount={activity?.processing ?? 0}
-              unreadCount={activity?.unread ?? 0}
-              onActivate={handleActivate}
-              onClose={handleClose}
-              onContextMenu={handleContextMenu}
-              isDragging={drag.draggedPath === project.path}
-              menuOpen={menu !== null}
-              dropPosition={drag.beforePath === project.path ? 'before' : drag.beforePath === null && project === openProjects.at(-1) ? 'after' : undefined}
-              onDragStart={(event, path) => { closeMenu(); drag.onDragStart(event, path); }}
+            <ProjectRailGroup
+              key={group.id}
+              group={group}
+              projects={projects}
+              containsActive={others.length < projects.length}
+              processingCount={others.reduce((sum, project) => sum + (activitySummary.get(project.path)?.processing ?? 0), 0)}
+              unreadCount={others.reduce((sum, project) => sum + (activitySummary.get(project.path)?.unread ?? 0), 0)}
+              menuOpen={overlayOpen}
+              isDragging={drag.dragged?.kind === 'group' && drag.dragged.groupId === group.id}
+              dropPosition={position === 'merge' ? undefined : position}
+              onToggle={handleToggleGroup}
+              onContextMenu={handleGroupContextMenu}
+              onDragStart={(event, dragged) => { closeMenu(); drag.onDragStart(event, { kind: 'group', groupId: dragged.id }); }}
               onDragEnd={drag.onDragEnd}
-            />
+            >
+              {projects.map(renderProject)}
+            </ProjectRailGroup>
           );
         })}
       </div>
@@ -561,6 +787,33 @@ export function ProjectRail() {
             >
               Open folder…
             </button>
+            {groupsToOpen.length > 0 && (
+              <>
+                <div className="project-rail-context-menu-divider" />
+                <div className="project-rail-context-menu-heading">Groups</div>
+                {groupsToOpen.map((group) => {
+                  const closed = group.projectPaths.filter((path) => !openProjectPaths.has(path));
+                  return (
+                    <button
+                      key={group.id}
+                      type="button"
+                      className="project-rail-context-menu-item project-rail-context-menu-item-recent project-rail-context-menu-item-group"
+                      style={groupColorStyle(group)}
+                      onClick={() => {
+                        setAddMenuOpen(false);
+                        handleOpenGroup(group);
+                      }}
+                      title={closed.join('\n')}
+                    >
+                      <span className="project-rail-context-menu-item-name">{group.name}</span>
+                      <span className="project-rail-context-menu-item-path">
+                        {`Open ${closed.length === 1 ? '1 project' : `${closed.length} projects`}: ${closed.map(nameFromPath).join(', ')}`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
             {filteredRecents.length > 0 && (
               <>
                 <div className="project-rail-context-menu-divider" />
@@ -607,61 +860,153 @@ export function ProjectRail() {
               },
             })}
           >
-            <button type="button" role="menuitem" className="project-rail-context-menu-item"
-              disabled={menuIndex <= 0} onClick={() => moveMenuProject(-1)}>
-              Move up
-            </button>
-            <button type="button" role="menuitem" className="project-rail-context-menu-item"
-              disabled={menuIndex < 0 || menuIndex === openProjects.length - 1} onClick={() => moveMenuProject(1)}>
-              Move down
-            </button>
-            <button type="button" role="menuitem" className="project-rail-context-menu-item"
-              disabled={openProjects.length < 2} onClick={() => { sortProjects(); closeMenu(); }}>
-              Sort by name
-            </button>
-            <div className="project-rail-context-menu-divider" />
-            <button
-              type="button"
-              role="menuitem"
-              className="project-rail-context-menu-item"
-              onClick={() => {
-                openSettings({ category: 'project-appearance', scope: 'project', timestamp: Date.now(),
-                  destination: { scope: 'project', category: 'project-appearance', target: { kind: 'workspace', workspacePath: menu.project.path } } });
-                closeMenu();
-              }}
-            >
-              Customize appearance…
-            </button>
-            <button
-              type="button"
-              className="project-rail-context-menu-item"
-              onClick={() => handleOpenInNewWindow(menu.project)}
-            >
-              Open in new window
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="project-rail-context-menu-item"
-              onClick={() => handleRevealInFinder(menu.project)}
-            >
-              {REVEAL_LABEL}
-            </button>
-            <div className="project-rail-context-menu-divider" />
-            <button
-              type="button"
-              role="menuitem"
-              className="project-rail-context-menu-item"
-              onClick={() => {
-                closeMenu();
-                handleClose(menu.project);
-              }}
-            >
-              Close project
-            </button>
+            {menu.kind === 'project' ? (
+              <>
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  disabled={!canStepMenuItem(-1)} onClick={() => stepMenuItem(-1)}>
+                  Move up
+                </button>
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  disabled={!canStepMenuItem(1)} onClick={() => stepMenuItem(1)}>
+                  Move down
+                </button>
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  disabled={openProjects.length < 2} onClick={() => { sortProjects(); closeMenu(); }}>
+                  Sort by name
+                </button>
+                <div className="project-rail-context-menu-divider" />
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  onClick={() => { setEditor({ mode: 'create', path: menu.project.path }); closeMenu(); }}>
+                  New group…
+                </button>
+                {groups.some((group) => group !== menuProjectGroup) && (
+                  <>
+                    <div className="project-rail-context-menu-heading">Move to group</div>
+                    {groups.filter((group) => group !== menuProjectGroup).map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        role="menuitem"
+                        className="project-rail-context-menu-item project-rail-context-menu-item-group"
+                        style={groupColorStyle(group)}
+                        onClick={() => { setProjectGroup({ path: menu.project.path, groupId: group.id }); closeMenu(); }}
+                      >
+                        <span className="project-rail-context-menu-item-name">{group.name}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+                {menuProjectGroup && (
+                  <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                    onClick={() => { setProjectGroup({ path: menu.project.path, groupId: null }); closeMenu(); }}>
+                    Remove from group
+                  </button>
+                )}
+                <div className="project-rail-context-menu-divider" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="project-rail-context-menu-item"
+                  onClick={() => {
+                    openSettings({ category: 'project-appearance', scope: 'project', timestamp: Date.now(),
+                      destination: { scope: 'project', category: 'project-appearance', target: { kind: 'workspace', workspacePath: menu.project.path } } });
+                    closeMenu();
+                  }}
+                >
+                  Customize appearance…
+                </button>
+                <button
+                  type="button"
+                  className="project-rail-context-menu-item"
+                  onClick={() => handleOpenInNewWindow(menu.project)}
+                >
+                  Open in new window
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="project-rail-context-menu-item"
+                  onClick={() => handleRevealInFinder(menu.project)}
+                >
+                  {REVEAL_LABEL}
+                </button>
+                <div className="project-rail-context-menu-divider" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="project-rail-context-menu-item"
+                  onClick={() => {
+                    closeMenu();
+                    handleClose(menu.project);
+                  }}
+                >
+                  Close project
+                </button>
+              </>
+            ) : menuGroupEntry && (
+              <>
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  onClick={() => { handleToggleGroup(menuGroupEntry.group); closeMenu(); }}>
+                  {menuGroupEntry.group.collapsed ? 'Expand group' : 'Collapse group'}
+                </button>
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  onClick={() => { setEditor({ mode: 'edit', groupId: menu.groupId }); closeMenu(); }}>
+                  Edit group…
+                </button>
+                <div className="project-rail-context-menu-divider" />
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  disabled={!canStepMenuItem(-1)} onClick={() => stepMenuItem(-1)}>
+                  Move up
+                </button>
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  disabled={!canStepMenuItem(1)} onClick={() => stepMenuItem(1)}>
+                  Move down
+                </button>
+                <div className="project-rail-context-menu-divider" />
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  onClick={() => { dissolveGroup(menu.groupId); closeMenu(); }}>
+                  Ungroup
+                </button>
+                <button type="button" role="menuitem" className="project-rail-context-menu-item"
+                  onClick={() => { closeMenu(); handleCloseGroup(menu.groupId); }}>
+                  {menuGroupEntry.projects.length === 1 ? 'Close project in group' : `Close ${menuGroupEntry.projects.length} projects in group`}
+                </button>
+              </>
+            )}
           </div>
           </FloatingFocusManager>
         </FloatingPortal>
+      )}
+
+      {editor?.mode === 'create' && editorAnchor && (
+        <ProjectRailGroupEditor
+          key={`create:${editor.path}`}
+          anchor={editorAnchor}
+          title="New group"
+          submitLabel="Create group"
+          initialName={DEFAULT_PROJECT_RAIL_GROUP_NAME}
+          initialColor={nextRailGroupColor(groups)}
+          onSubmit={({ name, color }) => {
+            createGroup({ paths: [editor.path], name, color });
+            setEditor(null);
+          }}
+          onCancel={() => setEditor(null)}
+        />
+      )}
+      {editor?.mode === 'edit' && editedGroup && editorAnchor && (
+        <ProjectRailGroupEditor
+          key={`edit:${editedGroup.id}`}
+          anchor={editorAnchor}
+          title={editor.isNew ? 'New group' : 'Edit group'}
+          submitLabel="Save"
+          initialName={editedGroup.name}
+          initialColor={editedGroup.color}
+          onSubmit={({ name, color }) => {
+            updateGroup({ groupId: editedGroup.id, patch: { name, color } });
+            setEditor(null);
+          }}
+          onCancel={() => setEditor(null)}
+        />
       )}
     </nav>
   );

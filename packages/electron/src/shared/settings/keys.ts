@@ -43,6 +43,18 @@ export const ProviderConfigSchema = z.object({
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
+/** A named folder in the multi-project rail. Shared by every window. */
+export const ProjectRailGroupSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().max(100),
+  color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+  collapsed: z.boolean(),
+  /** Members, including closed projects, so a reopened project rejoins its group. */
+  projectPaths: z.array(z.string().min(1)),
+});
+
+export type ProjectRailGroup = z.infer<typeof ProjectRailGroupSchema>;
+
 // ---------- The key registry ----------
 
 /**
@@ -91,6 +103,11 @@ export const SETTINGS_REGISTRY = {
     z.boolean(),
     { store: 'app-settings', path: 'allowUnlimitedProjects' },
     false,
+  ),
+  'projects.railGroups': setting(
+    z.array(ProjectRailGroupSchema),
+    { store: 'app-settings', path: 'projectRailGroups' },
+    [],
   ),
   // ---- AI providers (per-key) ----
   'ai.provider.claude': setting(

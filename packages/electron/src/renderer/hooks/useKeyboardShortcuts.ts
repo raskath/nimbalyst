@@ -12,6 +12,7 @@ import { store } from '@nimbalyst/runtime/store';
 import {
   multiProjectModeAtom,
   openProjectsAtom,
+  railOrderedProjectsAtom,
   activeWorkspacePathAtom,
   closeOpenProjectAtom,
 } from '../store/atoms/openProjects';
@@ -383,7 +384,8 @@ export function useKeyboardShortcuts({
       }
 
       // Multi-project rail shortcuts (only when rail is enabled).
-      // Cmd/Ctrl+1..9 activates the Nth open project (1-indexed).
+      // Cmd/Ctrl+1..9 activates the Nth open project (1-indexed) in rail
+      // order, counting projects inside collapsed groups.
       // Cmd/Ctrl+Shift+W closes the active project from the rail.
       const isMultiProject = store.get(multiProjectModeAtom);
       if (workspaceMode && isMultiProject && isAppModifier && !e.altKey) {
@@ -391,7 +393,7 @@ export function useKeyboardShortcuts({
           e.preventDefault();
           e.stopPropagation();
           const idx = parseInt(e.key, 10) - 1;
-          const projects = store.get(openProjectsAtom);
+          const projects = store.get(railOrderedProjectsAtom);
           const target = projects[idx];
           if (target) {
             const currentActive = store.get(activeWorkspacePathAtom);

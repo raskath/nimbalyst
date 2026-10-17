@@ -8,14 +8,24 @@ import {
   activeOpenProjectAtom,
   addOpenProjectAtom,
   closeOpenProjectAtom,
+  closeOpenProjectsAtom,
+  createRailGroupAtom,
+  dissolveRailGroupAtom,
+  dropOnRailAtom,
   moveOpenProjectAtom,
+  projectRailEntriesAtom,
+  railOrderedProjectsAtom,
+  setOpenProjectGroupAtom,
   sortOpenProjectsAtom,
+  stepRailItemAtom,
+  updateRailGroupAtom,
   isOpenProjectsAtCapAtom,
   attachWorkspaceSwitchCleanup,
   resolveInitialOpenProjectsState,
   selectProjectsToRegister,
   type OpenProject,
 } from '../openProjects';
+import { PROJECT_RAIL_GROUP_COLORS, projectRailGroupsAtom } from '../projectRailGroups';
 import { activeSessionIdAtom, selectedWorkstreamAtom } from '../sessions';
 
 const MAX_OPEN_PROJECTS = 8;
@@ -146,6 +156,71 @@ describe('openProjects atoms', () => {
     // Sorting is a one-time action; new projects still append.
     jotaiStore.set(addOpenProjectAtom, project('/ws/Aardvark'));
     expect(jotaiStore.get(openProjectsAtom).at(-1)?.path).toBe('/ws/Aardvark');
+  });
+
+  describe('rail groups', () => {
+    const paths = (atom: typeof railOrderedProjectsAtom) => jotaiStore.get(atom).map((p) => p.path);
+
+    beforeEach(() => {
+      jotaiStore.set(openProjectsAtom, ['/ws/a', '/ws/b', '/ws/c', '/ws/d'].map((path) => project(path)));
+      jotaiStore.set(activeWorkspacePathAtom, '/ws/a');
+    });
+
+    it('merges by drag into a colored group, names it, and keeps the active project', () => {
+      const groupId = jotaiStore.set(dropOnRailAtom, { item: { kind: 'project', path: '/ws/d' }, target: { type: 'merge', targetPath: '/ws/b' } });
+      expect(groupId).toEqual(expect.any(String));
+      expect(jotaiStore.get(projectRailGroupsAtom)).toEqual([
+        { id: groupId, name: 'New group', color: PROJECT_RAIL_GROUP_COLORS[0].value, collapsed: false, projectPaths: ['/ws/b', '/ws/d'] },
+      ]);
+      expect(paths(railOrderedProjectsAtom)).toEqual(['/ws/a', '/ws/b', '/ws/d', '/ws/c']);
+      expect(jotaiStore.get(openProjectsAtom).map((p) => p.path)).toEqual(['/ws/a', '/ws/b', '/ws/d', '/ws/c']);
+      expect(jotaiStore.get(activeWorkspacePathAtom)).toBe('/ws/a');
+
+      jotaiStore.set(updateRailGroupAtom, { groupId: groupId!, patch: { name: 'Kunde A', collapsed: true } });
+      const [entry] = jotaiStore.get(projectRailEntriesAtom).filter((e) => e.kind === 'group');
+      expect(entry).toMatchObject({ group: { name: 'Kunde A', collapsed: true } });
+      // A drop that changes nothing creates no group and writes nothing.
+      const before = jotaiStore.get(openProjectsAtom);
+      expect(jotaiStore.set(dropOnRailAtom, { item: { kind: 'project', path: '/ws/a' }, target: { type: 'merge', targetPath: '/ws/a' } })).toBeNull();
+      expect(jotaiStore.get(openProjectsAtom)).toBe(before);
+    });
+
+    it('rejoins a remembered group when a closed project is reopened', () => {
+      jotaiStore.set(createRailGroupAtom, { paths: ['/ws/a', '/ws/b'], name: 'Kunde' });
+      jotaiStore.set(closeOpenProjectAtom, '/ws/a');
+      expect(jotaiStore.get(projectRailGroupsAtom)[0].projectPaths).toEqual(['/ws/a', '/ws/b']);
+      jotaiStore.set(addOpenProjectAtom, project('/ws/a'));
+      expect(paths(railOrderedProjectsAtom)).toEqual(['/ws/b', '/ws/a', '/ws/c', '/ws/d']);
+    });
+
+    it('closes a whole group and activates the nearest project outside it', () => {
+      const groupId = jotaiStore.set(createRailGroupAtom, { paths: ['/ws/b', '/ws/c'] })!;
+      jotaiStore.set(activeWorkspacePathAtom, '/ws/b');
+      jotaiStore.set(closeOpenProjectsAtom, ['/ws/b', '/ws/c']);
+      expect(jotaiStore.get(openProjectsAtom).map((p) => p.path)).toEqual(['/ws/a', '/ws/d']);
+      expect(jotaiStore.get(activeWorkspacePathAtom)).toBe('/ws/d');
+      expect(jotaiStore.get(projectRailGroupsAtom).map((g) => g.id)).toEqual([groupId]);
+    });
+
+    it('moves, steps, ungroups and dissolves through the rail actions', () => {
+      const groupId = jotaiStore.set(createRailGroupAtom, { paths: ['/ws/c', '/ws/d'], color: null })!;
+      expect(jotaiStore.get(projectRailGroupsAtom)[0]).not.toHaveProperty('color');
+      jotaiStore.set(dropOnRailAtom, { item: { kind: 'group', groupId }, target: { type: 'insert', beforePath: '/ws/a', groupId: null } });
+      expect(paths(railOrderedProjectsAtom)).toEqual(['/ws/c', '/ws/d', '/ws/a', '/ws/b']);
+      jotaiStore.set(stepRailItemAtom, { item: { kind: 'project', path: '/ws/d' }, direction: -1 });
+      expect(paths(railOrderedProjectsAtom)).toEqual(['/ws/d', '/ws/c', '/ws/a', '/ws/b']);
+      jotaiStore.set(moveOpenProjectAtom, { path: '/ws/b', beforePath: '/ws/c', groupId });
+      expect(jotaiStore.get(projectRailGroupsAtom)[0].projectPaths).toEqual(['/ws/d', '/ws/b', '/ws/c']);
+      jotaiStore.set(setOpenProjectGroupAtom, { path: '/ws/d', groupId: null });
+      expect(paths(railOrderedProjectsAtom)).toEqual(['/ws/b', '/ws/c', '/ws/d', '/ws/a']);
+      jotaiStore.set(setOpenProjectGroupAtom, { path: '/ws/a', groupId });
+      expect(jotaiStore.get(projectRailGroupsAtom)[0].projectPaths).toEqual(['/ws/b', '/ws/c', '/ws/a']);
+      jotaiStore.set(sortOpenProjectsAtom);
+      expect(paths(railOrderedProjectsAtom)).toEqual(['/ws/d', '/ws/a', '/ws/b', '/ws/c']);
+      jotaiStore.set(dissolveRailGroupAtom, groupId);
+      expect(jotaiStore.get(projectRailGroupsAtom)).toEqual([]);
+      expect(paths(railOrderedProjectsAtom)).toEqual(['/ws/d', '/ws/a', '/ws/b', '/ws/c']);
+    });
   });
 
   describe('closeOpenProjectAtom', () => {

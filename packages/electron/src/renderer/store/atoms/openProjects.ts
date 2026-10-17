@@ -13,12 +13,32 @@
  * `navigationHistory.ts`.
  */
 
-import { atom, type createStore } from 'jotai';
+import { atom, type createStore, type Getter, type Setter } from 'jotai';
 import { store } from '@nimbalyst/runtime/store';
 import { clearWorkspaceActivityAtom } from './sessionActivity';
 import { activeSessionIdAtom, selectedWorkstreamAtom } from './sessions';
 import { workstreamActiveChildAtom } from './workstreamState';
 import { settingAtom } from './settingAtomFamily';
+import {
+  buildRailEntries,
+  createRailGroup,
+  DEFAULT_PROJECT_RAIL_GROUP_NAME,
+  dissolveRailGroup,
+  flattenRailEntries,
+  moveGroupInRail,
+  moveProjectInRail,
+  nextRailGroupColor,
+  projectRailGroupsAtom,
+  railStepTarget,
+  removeProjectFromRailGroup,
+  sortRail,
+  updateRailGroup,
+  type NewRailGroup,
+  type RailDragItem,
+  type RailDropTarget,
+  type RailGroupPatch,
+  type RailLayout,
+} from './projectRailGroups';
 
 type JotaiStore = ReturnType<typeof createStore>;
 
@@ -104,16 +124,17 @@ export const isOpenProjectsAtCapAtom = atom((get) => {
  * has reached the cap, returns without adding (caller should show a UI
  * hint via `isOpenProjectsAtCapAtom`).
  *
- * Activates the added project so the renderer immediately switches to it.
+ * Activates the added project so the renderer immediately switches to it,
+ * unless `activate` is false (opening a group activates once, at the end).
  */
 export const addOpenProjectAtom = atom(
   null,
-  (get, set, project: OpenProject) => {
+  (get, set, project: OpenProject, { activate = true }: { activate?: boolean } = {}) => {
     const current = get(openProjectsAtom);
 
     const existing = current.find((p) => p.path === project.path);
     if (existing) {
-      set(activeWorkspacePathAtom, existing.path);
+      if (activate) set(activeWorkspacePathAtom, existing.path);
       return true;
     }
 
@@ -122,54 +143,146 @@ export const addOpenProjectAtom = atom(
     }
 
     set(openProjectsAtom, [...current, project]);
-    set(activeWorkspacePathAtom, project.path);
+    if (activate) set(activeWorkspacePathAtom, project.path);
     return true;
   }
 );
 
-/** Move by identity so a project closed during a drag cannot move another one. */
+/**
+ * Top-level rail entries: ungrouped projects, and groups with their open
+ * members. See `projectRailGroups.ts` for where a group takes its place.
+ */
+export const projectRailEntriesAtom = atom((get) =>
+  buildRailEntries(get(openProjectsAtom), get(projectRailGroupsAtom)));
+
+/** Open projects in the order the rail shows them, collapsed groups included. */
+export const railOrderedProjectsAtom = atom((get) => flattenRailEntries(get(projectRailEntriesAtom)));
+
+function railLayout(get: Getter): RailLayout<OpenProject> {
+  return { projects: get(openProjectsAtom), groups: get(projectRailGroupsAtom) };
+}
+
+/** Write both halves of a rail edit together; an unchanged half is not rewritten. */
+function commitRailLayout(get: Getter, set: Setter, next: RailLayout<OpenProject> | null): boolean {
+  if (!next) return false;
+  if (next.projects !== get(openProjectsAtom)) set(openProjectsAtom, next.projects);
+  if (next.groups !== get(projectRailGroupsAtom)) set(projectRailGroupsAtom, next.groups);
+  return true;
+}
+
+function newRailGroup(get: Getter, options: { name?: string; color?: string | null } = {}): NewRailGroup {
+  const color = options.color === undefined ? nextRailGroupColor(get(projectRailGroupsAtom)) : options.color;
+  return {
+    id: crypto.randomUUID(),
+    name: options.name?.trim() || DEFAULT_PROJECT_RAIL_GROUP_NAME,
+    ...(color ? { color } : {}),
+    collapsed: false,
+  };
+}
+
+/**
+ * Move by identity so a project closed during a drag cannot move another one.
+ * With `groupId` the project lands inside that group, otherwise at the top
+ * level.
+ */
 export const moveOpenProjectAtom = atom(
   null,
-  (get, set, { path, beforePath }: { path: string; beforePath: string | null }) => {
-    const current = get(openProjectsAtom);
-    const project = current.find(project => project.path === path);
-    if (!project || path === beforePath) return;
-    if (beforePath !== null && !current.some(project => project.path === beforePath)) return;
-    const next = current.filter(project => project.path !== path);
-    const index = beforePath === null ? next.length : next.findIndex(project => project.path === beforePath);
-    next.splice(index, 0, project);
-    if (next.some((project, index) => project !== current[index])) set(openProjectsAtom, next);
+  (get, set, { path, beforePath, groupId = null }: { path: string; beforePath: string | null; groupId?: string | null }) => {
+    commitRailLayout(get, set, moveProjectInRail(railLayout(get), path, { type: 'insert', beforePath, groupId }));
+  },
+);
+
+/**
+ * Apply a rail drop. Returns the id of the group a merge created so the rail
+ * can offer to name it, otherwise null.
+ */
+export const dropOnRailAtom = atom(
+  null,
+  (get, set, { item, target }: { item: RailDragItem; target: RailDropTarget }): string | null => {
+    if (item.kind === 'group') {
+      if (target.type === 'insert') commitRailLayout(get, set, moveGroupInRail(railLayout(get), item.groupId, target.beforePath));
+      return null;
+    }
+    const group = target.type === 'merge' ? newRailGroup(get) : undefined;
+    const next = moveProjectInRail(railLayout(get), item.path, target, group);
+    commitRailLayout(get, set, next);
+    return group && next?.groups.some((candidate) => candidate.id === group.id) ? group.id : null;
+  },
+);
+
+/** "Move up" / "Move down": within a group for grouped projects, past whole groups otherwise. */
+export const stepRailItemAtom = atom(
+  null,
+  (get, set, { item, direction }: { item: RailDragItem; direction: -1 | 1 }) => {
+    const target = railStepTarget(get(projectRailEntriesAtom), item, direction);
+    if (target) set(dropOnRailAtom, { item, target });
   },
 );
 
 /** Arrange once; subsequent additions and manual moves retain their own order. */
 export const sortOpenProjectsAtom = atom(null, (get, set) => {
-  const current = get(openProjectsAtom);
-  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-  const next = [...current].sort((a, b) => collator.compare(a.name, b.name));
-  if (next.some((project, index) => project !== current[index])) set(openProjectsAtom, next);
+  commitRailLayout(get, set, sortRail(railLayout(get)));
+});
+
+/** Group open projects. Returns the new group's id, or null when none of the paths is open. */
+export const createRailGroupAtom = atom(
+  null,
+  (get, set, { paths, name, color }: { paths: string[]; name?: string; color?: string | null }): string | null => {
+    const group = newRailGroup(get, { name, color });
+    return commitRailLayout(get, set, createRailGroup(railLayout(get), paths, group)) ? group.id : null;
+  },
+);
+
+/** Move an open project to the end of a group, or out of its group with `groupId: null`. */
+export const setOpenProjectGroupAtom = atom(
+  null,
+  (get, set, { path, groupId }: { path: string; groupId: string | null }) => {
+    commitRailLayout(get, set, groupId === null
+      ? removeProjectFromRailGroup(railLayout(get), path)
+      : moveProjectInRail(railLayout(get), path, { type: 'join', groupId }));
+  },
+);
+
+/** Rename, recolor, collapse or expand a group in every window. */
+export const updateRailGroupAtom = atom(
+  null,
+  (get, set, { groupId, patch }: { groupId: string; patch: RailGroupPatch }) => {
+    const next = updateRailGroup(get(projectRailGroupsAtom), groupId, patch);
+    if (next) set(projectRailGroupsAtom, next);
+  },
+);
+
+/** Remove a group; its open projects stay where they are, at the top level. */
+export const dissolveRailGroupAtom = atom(null, (get, set, groupId: string) => {
+  commitRailLayout(get, set, dissolveRailGroup(railLayout(get), groupId));
 });
 
 /**
- * Remove a project from the rail. If the closed project was active, the
- * adjacent project (next, then previous, then null) becomes active.
+ * Remove projects from the rail. If the active project is among them, the
+ * nearest remaining project in rail order (after them, then before them)
+ * becomes active. Group membership is kept, so a reopened project rejoins
+ * its group.
  *
- * Callers are responsible for any pre-close confirmation (e.g. when the
+ * Callers are responsible for any pre-close confirmation (e.g. when a
  * project has streaming sessions).
  */
-export const closeOpenProjectAtom = atom(
+export const closeOpenProjectsAtom = atom(
   null,
-  (get, set, pathToClose: string) => {
+  (get, set, pathsToClose: string[]) => {
     const current = get(openProjectsAtom);
-    const idx = current.findIndex((p) => p.path === pathToClose);
-    if (idx === -1) return;
+    const closed = current.filter((p) => pathsToClose.includes(p.path));
+    if (closed.length === 0) return;
 
-    const next = current.filter((p) => p.path !== pathToClose);
-    set(openProjectsAtom, next);
+    const ordered = get(railOrderedProjectsAtom);
+    set(openProjectsAtom, current.filter((p) => !closed.includes(p)));
 
     const activePath = get(activeWorkspacePathAtom);
-    if (activePath === pathToClose) {
-      const replacement = next[idx] ?? next[idx - 1] ?? next[0] ?? null;
+    if (activePath && pathsToClose.includes(activePath)) {
+      const index = ordered.findIndex((p) => p.path === activePath);
+      const remains = (p: OpenProject) => !closed.includes(p);
+      const replacement = ordered.slice(index + 1).find(remains)
+        ?? ordered.slice(0, Math.max(index, 0)).reverse().find(remains)
+        ?? null;
       set(activeWorkspacePathAtom, replacement?.path ?? null);
     }
 
@@ -178,9 +291,13 @@ export const closeOpenProjectAtom = atom(
     // `workspaceStatePruner` subscriber that watches `openProjectsAtom` —
     // keeping that logic outside this module avoids a cycle with the atom
     // files that already import `activeWorkspacePathAtom`.
-    set(clearWorkspaceActivityAtom, pathToClose);
+    for (const project of closed) set(clearWorkspaceActivityAtom, project.path);
   }
 );
+
+export const closeOpenProjectAtom = atom(null, (_get, set, pathToClose: string) => {
+  set(closeOpenProjectsAtom, [pathToClose]);
+});
 
 // ---------------------------------------------------------------------------
 // Persistence
