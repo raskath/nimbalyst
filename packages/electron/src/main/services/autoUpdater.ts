@@ -15,6 +15,7 @@ import {
   isWindowsRenameLockError,
   planDownloadCompletedEmit,
   planUpdateErrorEmit,
+  selfUpdateEnabled,
   EMPTY_UPDATE_ANALYTICS_STATE,
   type UpdateAnalyticsState,
 } from './autoUpdaterUtils';
@@ -422,6 +423,8 @@ export class AutoUpdaterService {
       if (this.isCheckingForUpdate) {
         return { checking: true };
       }
+      // Same result electron-updater gives when updates are unsupported.
+      if (!selfUpdateEnabled(app.isPackaged)) return null;
 
       try {
         const result = await autoUpdater.checkForUpdatesAndNotify();
@@ -609,6 +612,7 @@ export class AutoUpdaterService {
       log.info('Already checking for updates, skipping...');
       return;
     }
+    if (!selfUpdateEnabled(app.isPackaged)) return;
 
     try {
       log.info('Checking for updates...');
@@ -633,6 +637,17 @@ export class AutoUpdaterService {
       setTimeout(() => {
         this.sendToFrontmostWindow('update-toast:error', {
           message: 'Update checking is not available in development mode'
+        });
+      }, 500);
+      return;
+    }
+
+    if (!selfUpdateEnabled(app.isPackaged)) {
+      log.info('Skipping update check: self-built copies do not update from the official feed');
+      this.sendToFrontmostWindow('update-toast:checking');
+      setTimeout(() => {
+        this.sendToFrontmostWindow('update-toast:error', {
+          message: 'Updates are turned off in self-built copies of Nimbalyst'
         });
       }, 500);
       return;

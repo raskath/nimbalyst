@@ -264,6 +264,7 @@ import { stopAllWorkspaceWatchers } from './file/WorkspaceWatcher.ts';
 import { commitTrackerLinker } from './services/CommitTrackerLinker';
 import { gitRefWatcher } from './file/GitRefWatcher';
 import { autoUpdaterService, AutoUpdaterService } from './services/autoUpdater';
+import { selfUpdateEnabled } from './services/autoUpdaterUtils';
 import { initializeDatabase } from './database/initialize';
 import { database, HandledError } from './database/PGLiteDatabaseWorker';
 import { drainMigrationForQuit, migrationNeedsQuitDrain } from './database/migrationOperation';
@@ -3163,10 +3164,12 @@ app.whenReady().then(async () => {
     // Set initial native theme
     updateNativeTheme();
 
-    // Initialize auto-updater (only in production)
-    if (app.isPackaged) {
+    // Initialize auto-updater (only in official production builds)
+    if (selfUpdateEnabled(app.isPackaged)) {
         logger.main.info('Starting auto-updater service');
         autoUpdaterService.startAutoUpdateCheck(60); // Check every hour
+    } else if (app.isPackaged) {
+        logger.main.info('Skipping auto-updater: self-built copies do not update from the official feed');
     } else {
         logger.main.info('Skipping auto-updater in development mode');
     }

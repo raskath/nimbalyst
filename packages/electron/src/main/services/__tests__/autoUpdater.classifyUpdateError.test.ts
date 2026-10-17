@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 // Electron app global. CI caught this on the first push - prior to the
 // extraction, this test file was the only failed file across 229 passing
 // tests. See #245.
-import { classifyUpdateError } from '../autoUpdaterUtils';
+import { classifyUpdateError, selfUpdateEnabled } from '../autoUpdaterUtils';
 
 // Regression coverage for nimbalyst#245. adambhenry reported the auto-update
 // flow failing on macOS arm64 with "The command is disabled and cannot be
@@ -108,5 +108,14 @@ describe('classifyUpdateError (issue #245)', () => {
     // reorder does not silently change behaviour.
     const err = new Error('Network timeout - command is disabled');
     expect(classifyUpdateError(err)).toBe('network');
+  });
+});
+
+describe('selfUpdateEnabled', () => {
+  it('updates only packaged official builds, so a self-built copy keeps its changes', () => {
+    expect(selfUpdateEnabled(true, 'true')).toBe(true);
+    expect(selfUpdateEnabled(true, 'false')).toBe(false);
+    expect(selfUpdateEnabled(true, undefined)).toBe(false);
+    expect(selfUpdateEnabled(false, 'true')).toBe(false);
   });
 });

@@ -10,6 +10,16 @@
  */
 
 /**
+ * Only official releases update themselves. A self-built copy (a fork, or a
+ * local `build:mac:local`) would otherwise replace itself with the next
+ * release from the official feed and silently drop its own changes.
+ * `OFFICIAL_BUILD` is fixed at build time and set only by the release workflow.
+ */
+export function selfUpdateEnabled(isPackaged: boolean, officialBuild = process.env.OFFICIAL_BUILD): boolean {
+  return isPackaged && officialBuild === 'true';
+}
+
+/**
  * Categorize update download duration for analytics.
  */
 export function categorizeDownloadDuration(durationMs: number): 'fast' | 'medium' | 'slow' {
