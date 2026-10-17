@@ -352,20 +352,35 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: transparent;
+  /* The same tile collapsed and expanded; only the open-folder badge differs. */
+  background-color: color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 28%, var(--nim-bg-tertiary));
   color: var(--rail-group-color, var(--nim-text-muted));
   cursor: pointer;
   user-select: none;
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
-.project-rail-group.is-collapsed .project-rail-group-toggle {
-  background-color: color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 28%, var(--nim-bg-tertiary));
+.project-rail-group-toggle:hover {
+  background-color: color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 40%, var(--nim-bg-tertiary));
 }
 
-.project-rail-group-toggle:hover,
-.project-rail-group.is-collapsed .project-rail-group-toggle:hover {
-  background-color: color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 40%, var(--nim-bg-tertiary));
+/* Marks an expanded group. The ring takes the band color behind it, so the
+ * badge looks cut out of the tile. */
+.project-rail-group-open-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background-color: var(--rail-group-color, var(--nim-text-muted));
+  border: 2px solid color-mix(in srgb, var(--rail-group-color, var(--nim-text-muted)) 16%, var(--nim-bg-secondary));
+  color: var(--nim-on-primary, #ffffff);
+  pointer-events: none;
 }
 
 .project-rail-group-toggle:focus-visible {

@@ -151,8 +151,13 @@ test('shows initials, an icon, or an own image on the collapsed tile and keeps i
   await expect(rail().getByRole('button', { name: 'Group Kunde A, 2 projects' }).locator('img')).toHaveJSProperty('naturalWidth', 96);
 });
 
-test('drops one project onto another to start a second group', async () => {
-  await rail().getByRole('button', { name: 'Group Kunde A, 2 projects' }).click();
+test('keeps the tile when expanded, and drops one project onto another to start a second group', async () => {
+  const kundeA = rail().getByRole('button', { name: 'Group Kunde A, 2 projects' });
+  await kundeA.click();
+  await expect(kundeA).toHaveAttribute('aria-expanded', 'true');
+  // Expanded, the group still shows its image; a small badge marks it open.
+  await expect(kundeA.locator('img')).toHaveJSProperty('naturalWidth', 96);
+  await expect(kundeA.getByTestId('project-rail-group-open-badge')).toBeVisible();
   const notes = projectButton(path.basename(root));
   // The middle half of a tile merges; the outer quarters reorder.
   await projectButton('blog').dragTo(notes, { targetPosition: { x: 20, y: 20 } });

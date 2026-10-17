@@ -3,9 +3,10 @@
  *
  * A Discord-style folder in the project rail. Collapsed, it is one tile with
  * up to four miniature project icons, or the group's own initials, icon or
- * image, plus a combined activity badge; expanded, its projects stack below a
- * folder tile on a band of the group's color. Clicking the tile toggles it;
- * the rail owns menus, dragging and drops.
+ * image, plus a combined activity badge; expanded, the tile stays the same,
+ * marked with a small open-folder badge, and its projects stack below it on a
+ * band of the group's color. Clicking the tile toggles it; the rail owns
+ * menus, dragging and drops.
  */
 
 import React, { useCallback, useState } from 'react';
@@ -171,10 +172,12 @@ export function ProjectRailGroup({
           aria-label={`Group ${group.name}, ${count}`}
           aria-current={collapsed && containsActive ? 'true' : undefined}
         >
-          {collapsed ? (
-            <ProjectRailGroupTile group={group} projects={projects} />
-          ) : (
-            <MaterialSymbol icon="folder_open" size={22} className="project-rail-group-folder" />
+          <ProjectRailGroupTile group={group} projects={projects} />
+          {/* Same corner as the activity badge, which only a collapsed group shows. */}
+          {!collapsed && (
+            <span className="project-rail-group-open-badge" data-testid="project-rail-group-open-badge" aria-hidden="true">
+              <MaterialSymbol icon="folder_open" size={10} opticalSize={20} />
+            </span>
           )}
           {showBadge && (
             <span

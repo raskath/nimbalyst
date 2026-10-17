@@ -377,4 +377,10 @@ it('sums the activity of a collapsed group and marks it while it holds the visib
   act(() => store.set(activeWorkspacePathAtom, '/p/D'));
   expect(folder.getAttribute('aria-current')).toBeNull();
   expect(within(folder).getByLabelText(/streaming session/).textContent).toBe('8');
+  expect(within(folder).queryByTestId('project-rail-group-open-badge')).toBeNull();
+  // Expanded, the projects show their own counts; the corner marks the group open instead.
+  fireEvent.click(folder);
+  expect(within(folder).queryByLabelText(/streaming session/)).toBeNull();
+  expect(within(folder).getByTestId('project-rail-group-open-badge').getAttribute('aria-hidden')).toBe('true');
+  expect(view.getAllByLabelText(/streaming session/).map(badge => badge.textContent)).toEqual(['5', '2', '1']);
 });
