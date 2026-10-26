@@ -184,6 +184,7 @@ interface ElectronAPI {
   team: {
     list: (options?: { forceRefresh?: boolean }) => Promise<OrganizationDirectoryResult>;
     getKeyCustodyStatus: (orgId: string) => Promise<{ success: boolean; mode?: 'server-managed' | 'unmigrated'; error?: string }>;
+    recovery: (orgId: string, command: import('../shared/teamRecovery').TeamRecoveryCommand, options?: { workspacePath?: string; password?: string }) => Promise<{ success: boolean; overview?: import('../shared/teamRecovery').TeamRecoveryOverview; error?: string }>;
     openManagementWindow: (target?: TeamManagementWindowTarget) => Promise<{ success: boolean }>;
     resolveOrgProjectsLocalState: (orgId: string) => Promise<{
       success: boolean;
@@ -448,6 +449,8 @@ interface ElectronAPI {
   copyToClipboard: (text: string) => Promise<{ success: boolean }>;
   copyImageToClipboard: (payload: { filePath?: string; dataUrl?: string }) => Promise<{ success: boolean; error?: string }>;
   readClipboard: () => Promise<{ success: boolean; text?: string }>;
+  /** Under WSL, the image on the Windows clipboard; null elsewhere or when there is none. */
+  readWindowsClipboardImage: () => Promise<{ mimeType: string; data: Uint8Array<ArrayBuffer> } | null>;
 
   // Settings operations
   getSidebarWidth: (workspacePath: string) => Promise<number>;

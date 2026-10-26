@@ -136,7 +136,7 @@ import {
   wantsPromptSuggestion,
 } from './claudeCode/promptSuggestionWait';
 import { injectPendingTeammateMessages } from './claudeCode/teammateInjection';
-import { hydrateTaskListItems, persistCurrentTodos, stopStaleRunningTasks } from './claudeCode/sessionMetadataWrites';
+import { hydrateTaskListItems, persistCurrentTasks, persistCurrentTodos, stopStaleRunningTasks } from './claudeCode/sessionMetadataWrites';
 import { applySystemTaskChunk, recordBackgroundEvidence, type TrackedSystemTask } from './claudeCode/systemTaskChunks';
 import {
   raceNextChunkWithStallWatchdog,
@@ -154,6 +154,7 @@ import { blockingUsageLimit, rateLimitMarker, usageLimitSystemMessage } from './
 import { buildTurnQuery, prepareTurnAttachments, resolveTurnPaths } from './claudeCode/turnPrologue';
 import { buildTurnCompleteUsage, finishTurn, handleTurnError, type TurnEpilogueHost } from './claudeCode/turnEpilogue';
 import { fromDbBoolean } from '../../../core/dbBoolean';
+import { agentToolActivity } from '../agentToolActivity';
 import { applyTaskListMutation, sortTaskList, type TaskListItem } from './claudeCode/taskListReconstruct';
 
 
@@ -408,6 +409,18 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         patternChecker: ClaudeCodeDeps.claudeSettingsPatternChecker,
         securityLogger: BaseAgentProvider.securityLogger ?? undefined,
         emit: this.emit.bind(this),
+        // A prompt that another answer settled still needs its card closed in the transcript.
+        // The service does not say who gave the answer, so this records it as the desktop.
+        recordReleasedPermission: (sessionId, requestId, response) => {
+          this.logAgentMessage(
+            sessionId,
+            'claude-code',
+            'output',
+            this.createPermissionResultMessage(requestId, response, 'desktop')
+          ).catch(err => {
+            console.error('[CLAUDE-CODE] Failed to persist permission response:', err);
+          });
+        },
       });
     }
 
@@ -475,6 +488,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       logSecurity: this.logSecurity.bind(this),
       trustChecker: BaseAgentProvider.trustChecker || undefined,
       patternSaver: ClaudeCodeDeps.claudeSettingsPatternSaver || undefined,
+      localAllowRuleChecker: ClaudeCodeDeps.claudeLocalAllowRuleChecker || undefined,
       getCurrentMode: () => this.currentMode,
       setCurrentMode: (mode) => { this.currentMode = mode; },
       getPendingExitPlanModeConfirmations: () => this.pendingExitPlanModeConfirmations,
@@ -520,6 +534,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   public static setImageCompressor(compressor: ((buffer: Buffer, mimeType: string, options?: { targetSizeBytes?: number }) => Promise<{ buffer: Buffer; mimeType: string; wasCompressed: boolean }>) | null): void { ClaudeCodeDeps.setImageCompressor(compressor); }
   public static setClaudeSettingsPatternSaver(saver: ((workspacePath: string, pattern: string) => Promise<void>) | null): void { ClaudeCodeDeps.setClaudeSettingsPatternSaver(saver); }
   public static setClaudeSettingsPatternChecker(checker: ((workspacePath: string, pattern: string) => Promise<boolean>) | null): void { ClaudeCodeDeps.setClaudeSettingsPatternChecker(checker); }
+  public static setClaudeLocalAllowRuleChecker(checker: ((workspacePath: string, pattern: string) => Promise<boolean>) | null): void { ClaudeCodeDeps.setClaudeLocalAllowRuleChecker(checker); }
   public static setTrustChecker(checker: ((workspacePath: string) => { trusted: boolean; mode: 'ask' | 'allow-all' | 'bypass-all' | null; allowAllUsesClassifier?: boolean }) | null): void { BaseAgentProvider.setTrustChecker(checker); }
   public static setExtensionFileTypesLoader(loader: (() => Set<string>) | null): void { ClaudeCodeDeps.setExtensionFileTypesLoader(loader); }
 
@@ -1213,6 +1228,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
               }
 
               case 'tool_result': {
+                // A failed or denied call may never reach PostToolUse.
+                if (sessionId) agentToolActivity.finished(sessionId, item.toolUseId);
                 const toolCall = state.toolCallsById.get(item.toolUseId);
                 if (toolCall) {
                   const { isDuplicate, isBackgroundAck } = applyToolResultToToolCall(toolCall, item.content, item.isError);
@@ -1645,6 +1662,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     // against the torn-down control channel and leaks. NIM-1470.
     const queryForDrainCleanup = this.leadQuery;
     this.leadQuery = null;
+    // Background commands drained with the turn; nothing it started is still running.
+    if (sessionId) agentToolActivity.endTurn(sessionId);
     ClaudeCodeProvider.streamingInstances.delete(this);
     this.abortController = null;
     this.wasInterrupted = false;
@@ -2566,23 +2585,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
   private async emitTaskUpdate(sessionId: string | undefined): Promise<void> {
     if (!sessionId) return;
-
-    try {
-      const { AISessionsRepository } = await import('../../../storage/repositories/AISessionsRepository');
-      const currentSession = await AISessionsRepository.get(sessionId);
-      const currentMetadata = currentSession?.metadata || {};
-
-      await AISessionsRepository.updateMetadata(sessionId, {
-        metadata: {
-          ...currentMetadata,
-          currentTasks: Array.from(this.activeTasks.values()),
-        }
-      });
-
-      this.emit('message:logged', { sessionId, direction: 'output' });
-    } catch (error) {
-      console.error('[CLAUDE-CODE] Failed to update session metadata with tasks:', error);
-    }
+    await persistCurrentTasks(sessionId, this.activeTasks, () => this.emit('message:logged', { sessionId, direction: 'output' }));
   }
 
   /**
@@ -3358,7 +3361,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 authorizePart: (partInput, warnings) => promptForTool(toolName, partInput, options, warnings),
                 logSecurity: (message, data) => this.logSecurity(message, data),
               },
-              input
+              input, options
             )
           : null;
         if (immediateDecision) {

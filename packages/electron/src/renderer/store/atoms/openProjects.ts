@@ -57,6 +57,7 @@ interface InitialWorkspaceWindowState {
   workspacePath?: string;
   activeWorkspacePath?: string | null;
   openProjectPaths?: string[];
+  restorePreviousProjects?: boolean;
 }
 
 interface ResolveInitialOpenProjectsInput {
@@ -376,7 +377,9 @@ export function resolveInitialOpenProjectsState({
     };
   }
 
-  if (restorePreviousProjects && normalizedPersistedPaths.length > 0) {
+  // An explicit "Open in new window" targets one project, even when app
+  // startup normally restores a rail. Live rail state above still wins on reload.
+  if (restorePreviousProjects && windowState?.restorePreviousProjects !== false && normalizedPersistedPaths.length > 0) {
     return {
       paths: normalizedPersistedPaths,
       activePath:

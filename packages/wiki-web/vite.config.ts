@@ -165,6 +165,9 @@ export default defineConfig(({ command, mode }) => {
   base: '/',
   plugins: [react(), pinnedExtensionBundleEntries(editorBundles, { parseAst })],
   define: pinnedExtensionDefines(editorBundles),
+  // JS chunks (including lazy preloads) and CSS resolve assets relative to
+  // themselves. The exporter rebases the HTML entry URLs for its mount path.
+  experimental: { renderBuiltUrl: (_filename, { hostType }) => ({ relative: hostType !== 'html' }) },
   resolve: {
     dedupe: hostSingletons,
     alias: [
@@ -176,6 +179,8 @@ export default defineConfig(({ command, mode }) => {
       // The collab bundle owns a compiled copy of the comment UI; a second copy would split its registries.
       { find: '@nimbalyst/runtime/editor/commenting/ui', replacement: resolvePath('@nimbalyst/collab-bundle/commenting-ui') },
       { find: /^@nimbalyst\/runtime$/, replacement: wikiRuntimeBridge },
+      // Monaco without its language workers; see monacoCore.ts.
+      { find: /^monaco-editor$/, replacement: path.join(here, 'src/editors/monacoCore.ts') },
     ],
   },
   server: { fs: { allow: [here, runtimeSource, webEditorsSourceDir, collabBundleDist, ...editorBundles.map((bundle) => path.dirname(bundle.entryPath))] } },

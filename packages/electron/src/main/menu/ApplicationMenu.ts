@@ -21,13 +21,15 @@
  * - Recent items change
  * - Windows are opened/closed/focused
  */
-import { Menu, BrowserWindow, app, dialog, shell, nativeTheme } from 'electron';
+import { Menu, BrowserWindow, app, dialog, nativeTheme } from 'electron';
+import { systemShell, openExternalInBackground } from '../utils/systemShell';
 import { basename, join } from 'path';
 import * as path from 'path';
 import { existsSync } from 'fs';
 import * as fs from 'fs';
 import { windowStates, createWindow, findWindowByFilePath, getWindowId } from '../window/WindowManager';
 import { createAboutWindow } from '../window/AboutWindow';
+import { installWindowListMenuRefresh } from './windowListMenuRefresh';
 import { createWorkspaceManagerWindow } from '../window/WorkspaceManagerWindow.ts';
 import { launchTutorialFromMenu } from './helpMenuActions';
 import {
@@ -1309,7 +1311,7 @@ export async function createApplicationMenu() {
                             fs.writeFileSync(logPath, `=== Nimbalyst Debug Log ===\nNo debug messages yet.\n\nDebug logging is only active in development mode.\nTo enable debug logging in production, set NODE_ENV=development\n`);
                         }
 
-                        shell.openPath(logPath).catch((err: any) => {
+                        systemShell.openPath(logPath).catch((err: any) => {
                             console.error('Failed to open debug log:', err);
                             dialog.showErrorBox('Error', `Could not open debug log at: ${logPath}`);
                         });
@@ -1329,7 +1331,7 @@ export async function createApplicationMenu() {
                             fs.writeFileSync(logPath, `=== Nimbalyst Main Log ===\nNo log messages yet.\n\nThis log contains main process and application logs.\n`);
                         }
 
-                        shell.openPath(logPath).catch((err: any) => {
+                        systemShell.openPath(logPath).catch((err: any) => {
                             console.error('Failed to open main log:', err);
                             dialog.showErrorBox('Error', `Could not open main log at: ${logPath}`);
                         });
@@ -1434,7 +1436,7 @@ export async function createApplicationMenu() {
                     label: 'Open User Data Directory',
                     click: async () => {
                         const userDataPath = app.getPath('userData');
-                        shell.openPath(userDataPath).catch((err: any) => {
+                        systemShell.openPath(userDataPath).catch((err: any) => {
                             console.error('Failed to open user data directory:', err);
                             dialog.showErrorBox('Error', `Could not open user data directory at: ${userDataPath}`);
                         });
@@ -1710,7 +1712,7 @@ export async function createApplicationMenu() {
                             helpType: 'docs',
                             context: 'menu',
                         });
-                        shell.openExternal('https://docs.nimbalyst.com/');
+                        openExternalInBackground('https://docs.nimbalyst.com/');
                     }
                 },
                 {
@@ -1720,7 +1722,7 @@ export async function createApplicationMenu() {
                             helpType: 'chrome_extension',
                             context: 'menu',
                         });
-                        shell.openExternal('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
+                        openExternalInBackground('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
                     }
                 },
                 // Extension SDK Documentation - only show when Extension Development Kit is enabled
@@ -1782,7 +1784,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_issues',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/issues');
+                        openExternalInBackground('https://github.com/nimbalyst/nimbalyst/issues');
                     }
                 },
                 {
@@ -1792,7 +1794,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_discussions',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/discussions');
+                        openExternalInBackground('https://github.com/nimbalyst/nimbalyst/discussions');
                     }
                 },
                 { type: 'separator' },
@@ -1803,7 +1805,7 @@ export async function createApplicationMenu() {
                             label: 'Join Discord',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'discord', context: 'menu' });
-                                shell.openExternal('https://discord.gg/ubZDt4esEn');
+                                openExternalInBackground('https://discord.gg/ubZDt4esEn');
                             }
                         },
                         { type: 'separator' },
@@ -1811,35 +1813,35 @@ export async function createApplicationMenu() {
                             label: 'YouTube',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'youtube', context: 'menu' });
-                                shell.openExternal('https://youtube.com/@nimbalyst');
+                                openExternalInBackground('https://youtube.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'LinkedIn',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'linkedin', context: 'menu' });
-                                shell.openExternal('https://linkedin.com/company/nimbalyst');
+                                openExternalInBackground('https://linkedin.com/company/nimbalyst');
                             }
                         },
                         {
                             label: 'X (Twitter)',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'x', context: 'menu' });
-                                shell.openExternal('https://x.com/nimbalyst');
+                                openExternalInBackground('https://x.com/nimbalyst');
                             }
                         },
                         {
                             label: 'TikTok',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'tiktok', context: 'menu' });
-                                shell.openExternal('https://www.tiktok.com/@nimbalyst');
+                                openExternalInBackground('https://www.tiktok.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'Instagram',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'instagram', context: 'menu' });
-                                shell.openExternal('https://www.instagram.com/nimbalyst');
+                                openExternalInBackground('https://www.instagram.com/nimbalyst');
                             }
                         },
                     ]
@@ -1879,7 +1881,7 @@ export async function createApplicationMenu() {
                             helpType: 'docs',
                             context: 'menu',
                         });
-                        shell.openExternal('https://docs.nimbalyst.com/');
+                        openExternalInBackground('https://docs.nimbalyst.com/');
                     }
                 },
                 {
@@ -1889,7 +1891,7 @@ export async function createApplicationMenu() {
                             helpType: 'chrome_extension',
                             context: 'menu',
                         });
-                        shell.openExternal('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
+                        openExternalInBackground('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
                     }
                 },
                 // Extension SDK Documentation - only show when Extension Development Kit is enabled
@@ -1951,7 +1953,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_issues',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/issues');
+                        openExternalInBackground('https://github.com/nimbalyst/nimbalyst/issues');
                     }
                 },
                 {
@@ -1961,7 +1963,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_discussions',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/discussions');
+                        openExternalInBackground('https://github.com/nimbalyst/nimbalyst/discussions');
                     }
                 },
                 { type: 'separator' },
@@ -1972,7 +1974,7 @@ export async function createApplicationMenu() {
                             label: 'Join Discord',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'discord', context: 'menu' });
-                                shell.openExternal('https://discord.gg/ubZDt4esEn');
+                                openExternalInBackground('https://discord.gg/ubZDt4esEn');
                             }
                         },
                         { type: 'separator' },
@@ -1980,35 +1982,35 @@ export async function createApplicationMenu() {
                             label: 'YouTube',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'youtube', context: 'menu' });
-                                shell.openExternal('https://youtube.com/@nimbalyst');
+                                openExternalInBackground('https://youtube.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'LinkedIn',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'linkedin', context: 'menu' });
-                                shell.openExternal('https://linkedin.com/company/nimbalyst');
+                                openExternalInBackground('https://linkedin.com/company/nimbalyst');
                             }
                         },
                         {
                             label: 'X (Twitter)',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'x', context: 'menu' });
-                                shell.openExternal('https://x.com/nimbalyst');
+                                openExternalInBackground('https://x.com/nimbalyst');
                             }
                         },
                         {
                             label: 'TikTok',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'tiktok', context: 'menu' });
-                                shell.openExternal('https://www.tiktok.com/@nimbalyst');
+                                openExternalInBackground('https://www.tiktok.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'Instagram',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'instagram', context: 'menu' });
-                                shell.openExternal('https://www.instagram.com/nimbalyst');
+                                openExternalInBackground('https://www.instagram.com/nimbalyst');
                             }
                         },
                     ]
@@ -2043,6 +2045,10 @@ registerOrganizationMenuRebuild(() => { void updateApplicationMenu(); });
 // Rebuild when the organization window gains or loses focus, so the Messages
 // menu (and the Cmd+K / Cmd+F accelerators it borrows) follows the key window.
 registerTeamManagementFocusChange(() => { void updateApplicationMenu(); });
+
+// Rebuild when windows open, close, or take focus, so the Window menu's
+// project list and checkmark match the real windows.
+installWindowListMenuRefresh(app, () => { void updateApplicationMenu(); });
 
 // Update application menu
 export async function updateApplicationMenu() {
